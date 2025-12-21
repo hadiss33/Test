@@ -1,0 +1,18 @@
+<?php
+
+namespace App\Services\FlightProviders;
+
+interface FlightProviderInterface
+{
+
+    public function getFlightsSchedule(string $fromDate, string $toDate): array;
+
+
+    public function getAvailabilityFare(string $origin, string $destination, string $date): array;
+
+
+    public function parseAvailableSeats(string $capacity): int;
+
+    
+    public function determineStatus(string $capacity): string;
+}
