@@ -26,7 +26,7 @@ class NiraProvider implements FlightProviderInterface
         try {
             $response = $this->client->get($url, [
                 'query' => [
-                    'ModuleType' => $this->config['ModuleType'],
+                    'ModuleType' => $this->config['code'],
                     'ModuleName' => 'Flights',
                     'FromDate' => $fromDate,
                     'ToDate' => $toDate,

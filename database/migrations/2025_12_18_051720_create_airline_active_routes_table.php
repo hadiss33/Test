@@ -23,6 +23,7 @@ return new class extends Migration
             $table->string('airline_code', 10);
             $table->string('origin');
             $table->string('destination');
+            $table->string('service');
             
             $table->tinyInteger('monday')->default(0);
             $table->tinyInteger('tuesday')->default(0);

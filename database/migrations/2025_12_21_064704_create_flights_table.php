@@ -15,16 +15,13 @@ return new class extends Migration
             $table->id();
             
             $table->foreignId('airline_active_route_id')->constrained('airline_active_routes')->onDelete('cascade');
-            
             $table->string('flight_number', 20);
+
             $table->dateTime('departure_datetime');
             
-            $table->date('flight_date');
-            $table->dateTime('arrival_datetime')->nullable();
             $table->string('flight_class', 10)->default('Y');
             $table->string('class_status', 10)->nullable();
             $table->string('aircraft_type', 10)->nullable();
-            $table->string('currency', 3)->default('IRR');
             
             $table->decimal('price_adult', 12, 2)->default(0);
             $table->decimal('price_child', 12, 2)->default(0);
