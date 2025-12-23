@@ -33,7 +33,6 @@ return new class extends Migration
             $table->timestamp('last_updated_at')->nullable();
             
             $table->json('raw_data')->nullable();
-            $table->timestamps();
 
             $table->index(['status', 'available_seats']);
             $table->index('update_priority');

@@ -15,7 +15,6 @@ class FlightServiceRepository implements FlightServiceRepositoryInterface
         $this->model = $model;
     }
 
-
     public function getActiveServices(string $serviceName): array
     {
         return Cache::remember("flight_services_{$serviceName}", 300, function () use ($serviceName) {
@@ -31,7 +30,6 @@ class FlightServiceRepository implements FlightServiceRepositoryInterface
         });
     }
 
-
     public function getServiceByCode(string $serviceName, string $code): ?array
     {
         $item = $this->model
@@ -40,12 +38,12 @@ class FlightServiceRepository implements FlightServiceRepositoryInterface
             ->byService($serviceName)
             ->get()
             ->first(function ($item) use ($code) {
-                return isset($item->data['iata']) && $item->data['iata'] === $code;
+                $data = $item->data;
+                return isset($data['iata']) && $data['iata'] === $code;
             });
 
         return $item ? $this->transformToConfig($item, $serviceName) : null;
     }
-
 
     public function isServiceActive(string $serviceName, string $code): bool
     {
@@ -55,34 +53,24 @@ class FlightServiceRepository implements FlightServiceRepositoryInterface
             ->byService($serviceName)
             ->get()
             ->contains(function ($item) use ($code) {
-                return isset($item->data['iata']) && $item->data['iata'] === $code;
+                $data = $item->data;
+                return isset($data['iata']) && $data['iata'] === $code;
             });
     }
 
-
     protected function transformToConfig($item, string $serviceName): array
     {
+        $data = $item->data;
+
         if ($serviceName === 'nira') {
             return [
                 'id' => $item->id,
-                'code' => $item->data['iata'] ?? null,
-                'name' => $this->getAirlineName($item->data['iata'] ?? null),
+                'code' => $data['iata'] ?? null,
+                'name' => $this->getAirlineName($data['iata'] ?? null),
                 'base_url_ws1' => $item->url,
-                'base_url_ws2' => $item->data['url'] ?? null,
+                'base_url_ws2' => $data['url'] ?? null,
                 'office_user' => $item->username,
                 'office_pass' => $item->password,
-                'service' => $serviceName,
-            ];
-        }
-
-        if ($serviceName === 'snapptrip_hotel') {
-            return [
-                'id' => $item->id,
-                'code' => $item->data['provider_code'] ?? null,
-                'name' => $item->data['provider_name'] ?? 'Unknown',
-                'base_url' => $item->url,
-                'api_key' => $item->username,
-                'api_secret' => $item->password,
                 'service' => $serviceName,
             ];
         }
@@ -93,7 +81,6 @@ class FlightServiceRepository implements FlightServiceRepositoryInterface
             'service' => $serviceName,
         ];
     }
-
 
     protected function getAirlineName(?string $iataCode): string
     {
@@ -115,7 +102,6 @@ class FlightServiceRepository implements FlightServiceRepositoryInterface
 
         return $airlines[$iataCode] ?? "Airline {$iataCode}";
     }
-
 
     public function clearCache(string $serviceName): void
     {

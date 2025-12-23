@@ -6,27 +6,33 @@ use Illuminate\Database\Eloquent\Model;
 
 class ApplicationInterface extends Model
 {
-    protected $table = 'application_interface';
+    protected $table = 'application_interfaces';
     public $timestamps = false;
 
     protected $fillable = [
         'branch',
         'type',
         'service',
-        'object_type',
-        'object',
         'url',
         'username',
         'password',
         'data',
-        'priority',
         'status'
     ];
 
     protected $casts = [
-        'data' => 'array',
-        'status' => 'integer',
+        'status' => 'boolean',
     ];
+
+    public function getDataAttribute($value)
+    {
+        return json_decode($value, true);
+    }
+
+    public function setDataAttribute($value)
+    {
+        $this->attributes['data'] = json_encode($value);
+    }
 
     public function scopeActive($query)
     {
