@@ -7,6 +7,7 @@ use Carbon\Carbon;
 
 class Flight extends Model
 {
+    public $timestamps = false;
     protected $fillable = [
         'airline_active_route_id',
         'flight_number',
@@ -19,12 +20,12 @@ class Flight extends Model
         'price_child',
         'price_infant',
         'aircraft_type',
-        'currency',
+        // 'currency',
         'status',
         'update_priority',
         'last_updated_at',
         'raw_data',
-        'extra_detail_id', 
+        // 'extra_detail_id', 
     ];
 
     protected $casts = [
@@ -42,15 +43,15 @@ class Flight extends Model
         return $this->belongsTo(AirlineActiveRoute::class, 'airline_active_route_id');
     }
 
-    public function extraDetail()
-    {
-        return $this->belongsTo(ExtraDetail::class, 'extra_detail_id');
-    }
+    // public function extraDetail()
+    // {
+    //     return $this->belongsTo(ExtraDetail::class, 'extra_detail_id');
+    // }
 
-    public function getArrivalDatetimeAttribute()
-    {
-        return $this->extraDetail?->arrival_datetime;
-    }
+    // public function getArrivalDatetimeAttribute()
+    // {
+    //     return $this->extraDetail?->arrival_datetime;
+    // }
 
     // Helper Methods
     public function getDaysUntilDeparture(): int

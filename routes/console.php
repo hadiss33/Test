@@ -1,8 +1,12 @@
 <?php
-
-use Illuminate\Foundation\Inspiring;
+use App\Console\Commands\UpdateFlights;
 use Illuminate\Support\Facades\Artisan;
 
-Artisan::command('inspire', function () {
-    $this->comment(Inspiring::quote());
-})->purpose('Display an inspiring quote');
+Artisan::command('flights:update {service=nira} {--airline=} {--priority=}', function ($service = 'nira') {
+    // فراخوانی کلاس کامند
+    $this->call(UpdateFlights::class, [
+        'service' => $service, 
+        '--airline' => $this->option('airline'), 
+        '--priority' => $this->option('priority')
+    ]);
+})->purpose('Update flights manually');

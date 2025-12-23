@@ -4,11 +4,12 @@ namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
 use App\Repositories\Contracts\FlightServiceRepositoryInterface;
-use App\Services\{RouteSyncService, FlightProviders\NiraProvider};
+use App\Services\RouteSyncService;
+use App\Services\FlightProviders\NiraProvider;
 
 class SyncActiveRoutes extends Command
 {
-    protected $signature = 'flights:sync-routes {service=nira} {airline_code?}';
+    protected $signature = 'flights:sync-routes {service=nira} {iata?}';
     protected $description = 'Sync active routes';
 
     protected $repository;
@@ -22,10 +23,10 @@ class SyncActiveRoutes extends Command
     public function handle()
     {
         $service = $this->argument('service');
-        $airlineCode = $this->argument('airline_code');
+        $iata = $this->argument('iata');
 
-        $airlines = $airlineCode
-            ? [$this->repository->getServiceByCode($service, $airlineCode)]
+        $airlines = $iata
+            ? [$this->repository->getServiceByCode($service, $iata)]
             : $this->repository->getActiveServices($service);
 
         $airlines = array_filter($airlines);
@@ -48,3 +49,4 @@ class SyncActiveRoutes extends Command
         return 0;
     }
 }
+//php artisan flights:sync-routes nira

@@ -35,8 +35,8 @@ return new class extends Migration
             
             $table->timestamp('updated_at');
             
-            $table->index(['airline_code', 'origin', 'destination']);
-            $table->unique(['airline_code', 'origin', 'destination']);
+            $table->index(['iata', 'origin', 'destination']);
+            $table->unique(['iata', 'origin', 'destination']);
         });
     }
 

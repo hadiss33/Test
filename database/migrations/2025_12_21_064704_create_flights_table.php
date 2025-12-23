@@ -18,7 +18,7 @@ return new class extends Migration
             $table->string('flight_number', 20);
 
             $table->dateTime('departure_datetime');
-            
+            $table->date('flight_date')->index();
             $table->string('flight_class', 10)->default('Y');
             $table->string('class_status', 10)->nullable();
             $table->string('aircraft_type', 10)->nullable();
@@ -37,8 +37,9 @@ return new class extends Migration
             $table->index(['status', 'available_seats']);
             $table->index('update_priority');
             $table->index('departure_datetime');
-            
-            $table->unique(['airline_active_route_id','flight_number','flight_date', 'flight_class'], 'unique_flight');
+            $table->unique(
+                ['airline_active_route_id', 'flight_number', 'flight_class', 'flight_date'], 'unique_flight_per_day'
+            );
         });
     }
 

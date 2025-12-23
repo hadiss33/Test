@@ -13,6 +13,7 @@ return new class extends Migration
     {
         Schema::create('extra_details', function (Blueprint $table) {
             $table->id();
+            $table->foreignId('flight_id')->constrained('flights')->onDelete('cascade');
             $table->dateTime('arrival_datetime')->nullable();
             $table->timestamps();
         });
