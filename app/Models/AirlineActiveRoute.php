@@ -11,7 +11,7 @@ class AirlineActiveRoute extends Model
     const CREATED_AT = null;
 
     protected $fillable = [
-        'iata',        
+        'iata',
         'origin',
         'destination',
         'service',
@@ -25,13 +25,14 @@ class AirlineActiveRoute extends Model
     ];
 
     protected $casts = [
-        'monday' => 'integer',
-        'tuesday' => 'integer',
-        'wednesday' => 'integer',
-        'thursday' => 'integer',
-        'friday' => 'integer',
-        'saturday' => 'integer',
-        'sunday' => 'integer',
+        'monday' => 'boolean',
+        'tuesday' => 'boolean',
+        'wednesday' => 'boolean',
+        'thursday' => 'boolean',
+        'friday' => 'boolean',
+        'saturday' => 'boolean',
+        'sunday' => 'boolean',
+        'updated_at' => 'datetime',
     ];
 
     public function flights()
@@ -39,21 +40,10 @@ class AirlineActiveRoute extends Model
         return $this->hasMany(Flight::class);
     }
 
-    public function getAirlineCodeAttribute()
-    {
-        return $this->iata;
-    }
-
     public function hasFlightOnDate(Carbon $date): bool
     {
         $dayName = strtolower($date->englishDayOfWeek);
-        return $this->{$dayName} > 0;
-    }
-
-    public function getFlightCountForDate(Carbon $date): int
-    {
-        $dayName = strtolower($date->englishDayOfWeek);
-        return $this->{$dayName} ?? 0;
+        return $this->{$dayName} === true;
     }
 
     public function scopeForService($query, string $service)
@@ -64,5 +54,18 @@ class AirlineActiveRoute extends Model
     public function scopeForAirline($query, string $iata)
     {
         return $query->where('iata', $iata);
+    }
+
+    public function scopeActive($query)
+    {
+        return $query->where(function($q) {
+            $q->where('monday', true)
+              ->orWhere('tuesday', true)
+              ->orWhere('wednesday', true)
+              ->orWhere('thursday', true)
+              ->orWhere('friday', true)
+              ->orWhere('saturday', true)
+              ->orWhere('sunday', true);
+        });
     }
 }

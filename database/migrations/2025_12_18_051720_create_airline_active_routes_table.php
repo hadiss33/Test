@@ -25,15 +25,15 @@ return new class extends Migration
             $table->string('destination');
             $table->string('service');
             
-            $table->tinyInteger('monday')->default(0);
-            $table->tinyInteger('tuesday')->default(0);
-            $table->tinyInteger('wednesday')->default(0);
-            $table->tinyInteger('thursday')->default(0);
-            $table->tinyInteger('friday')->default(0);
-            $table->tinyInteger('saturday')->default(0);
-            $table->tinyInteger('sunday')->default(0);
+            $table->boolean('monday')->default(false);
+            $table->boolean('tuesday')->default(false);
+            $table->boolean('wednesday')->default(false);
+            $table->boolean('thursday')->default(false);
+            $table->boolean('friday')->default(false);
+            $table->boolean('saturday')->default(false);
+            $table->boolean('sunday')->default(false);
             
-            $table->timestamp('updated_at');
+            $table->timestamp('updated_at')->nullable();
             
             $table->index(['iata', 'origin', 'destination']);
             $table->unique(['iata', 'origin', 'destination']);

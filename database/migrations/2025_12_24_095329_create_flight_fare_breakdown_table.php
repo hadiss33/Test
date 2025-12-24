@@ -11,10 +11,8 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('extra_details', function (Blueprint $table) {
+        Schema::create('flight_fare_breakdown', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('flight_id')->constrained('flights')->onDelete('cascade');
-            $table->dateTime('arrival_datetime')->nullable();
             $table->timestamps();
         });
     }
@@ -24,6 +22,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::dropIfExists('extra_details');
+        Schema::dropIfExists('flight_fare_breakdown');
     }
 };

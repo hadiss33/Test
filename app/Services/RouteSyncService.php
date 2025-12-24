@@ -2,10 +2,11 @@
 
 namespace App\Services;
 
-use App\Models\AirlineActiveRoute;
+use App\Models\{Flight, FlightClass, FlightDetail, FlightRawData, FlightFareBreakdown};
 use App\Services\FlightProviders\FlightProviderInterface;
 use Carbon\Carbon;
-use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\{DB, Log};
+
 
 class RouteSyncService
 {
@@ -58,12 +59,17 @@ class RouteSyncService
                 $routes[$key] = [
                     'origin' => $origin,
                     'destination' => $destination,
-                    'monday' => 0, 'tuesday' => 0, 'wednesday' => 0,
-                    'thursday' => 0, 'friday' => 0, 'saturday' => 0, 'sunday' => 0,
+                    'monday' => false,
+                    'tuesday' => false,
+                    'wednesday' => false,
+                    'thursday' => false,
+                    'friday' => false,
+                    'saturday' => false,
+                    'sunday' => false,
                 ];
             }
 
-            $routes[$key][$dayName]++;
+            $routes[$key][$dayName] = true;
         }
 
         return $routes;
@@ -71,7 +77,7 @@ class RouteSyncService
 
     protected function cleanupOldRoutes(array $activeRouteKeys): void
     {
-        $existingRoutes = AirlineActiveRoute::where('iata', $this->iata)
+        $existingRoutes = \App\Models\AirlineActiveRoute::where('iata', $this->iata)
             ->where('service', $this->service)
             ->get();
         
@@ -88,7 +94,7 @@ class RouteSyncService
     protected function saveRoutes(array $routes): void
     {
         foreach ($routes as $routeData) {
-            AirlineActiveRoute::updateOrCreate(
+            \App\Models\AirlineActiveRoute::updateOrCreate(
                 [
                     'iata' => $this->iata,
                     'origin' => $routeData['origin'],

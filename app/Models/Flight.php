@@ -8,34 +8,19 @@ use Carbon\Carbon;
 class Flight extends Model
 {
     public $timestamps = false;
+
     protected $fillable = [
         'airline_active_route_id',
         'flight_number',
         'departure_datetime',
-        'flight_date',
-        'flight_class',
-        'class_status',
-        'available_seats',
-        'price_adult',
-        'price_child',
-        'price_infant',
         'aircraft_type',
-        // 'currency',
-        'status',
         'update_priority',
         'last_updated_at',
-        'raw_data',
-        // 'extra_detail_id', 
     ];
 
     protected $casts = [
         'departure_datetime' => 'datetime',
-        'flight_date' => 'date',
-        'price_adult' => 'decimal:2',
-        'price_child' => 'decimal:2',
-        'price_infant' => 'decimal:2',
         'last_updated_at' => 'datetime',
-        'raw_data' => 'array',
     ];
 
     public function route()
@@ -43,17 +28,22 @@ class Flight extends Model
         return $this->belongsTo(AirlineActiveRoute::class, 'airline_active_route_id');
     }
 
-    // public function extraDetail()
-    // {
-    //     return $this->belongsTo(ExtraDetail::class, 'extra_detail_id');
-    // }
+    public function classes()
+    {
+        return $this->hasMany(FlightClass::class);
+    }
 
-    // public function getArrivalDatetimeAttribute()
-    // {
-    //     return $this->extraDetail?->arrival_datetime;
-    // }
+    public function details()
+    {
+        return $this->hasOne(FlightDetail::class);
+    }
 
-    // Helper Methods
+
+    public function getFlightDateAttribute(): string
+    {
+        return $this->departure_datetime->toDateString();
+    }
+
     public function getDaysUntilDeparture(): int
     {
         return now()->diffInDays($this->departure_datetime, false);
@@ -69,17 +59,6 @@ class Flight extends Model
         return 4;
     }
 
-    public function scopeActive($query)
-    {
-        return $query->where('status', 'active');
-    }
-
-    public function scopeAvailable($query)
-    {
-        return $query->where('status', 'active')
-            ->where('available_seats', '>', 0);
-    }
-
     public function scopeUpcoming($query)
     {
         return $query->where('departure_datetime', '>=', now());
@@ -88,5 +67,10 @@ class Flight extends Model
     public function scopeByPriority($query, int $priority)
     {
         return $query->where('update_priority', $priority);
+    }
+
+    public function scopeOnDate($query, Carbon $date)
+    {
+        return $query->whereDate('departure_datetime', $date->toDateString());
     }
 }
