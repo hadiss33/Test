@@ -17,7 +17,7 @@ class FlightFareBreakdown extends Model
         'tax_hl',
         'tax_lp',
         'total_price',
-        'fetched_at',
+        'last_updated_at',
     ];
 
     protected $casts = [
@@ -27,7 +27,7 @@ class FlightFareBreakdown extends Model
         'tax_hl' => 'decimal:2',
         'tax_lp' => 'decimal:2',
         'total_price' => 'decimal:2',
-        'fetched_at' => 'datetime',
+        'last_updated_at' => 'datetime',
     ];
 
     public function flightClass()

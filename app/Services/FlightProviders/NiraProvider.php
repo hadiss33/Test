@@ -14,7 +14,7 @@ class NiraProvider implements FlightProviderInterface
     {
         $this->config = $config;
         $this->client = new Client([
-            'timeout' => 30,
+            'timeout' => 130,
             'verify' => false,
         ]);
     }

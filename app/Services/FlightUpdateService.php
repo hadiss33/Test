@@ -177,7 +177,7 @@ class FlightUpdateService
                     'tax_hl' => $taxes['HL'] ?? 0,
                     'tax_lp' => $taxes['LP'] ?? 0,
                     'total_price' => $fareData[$keys['total']],
-                    'fetched_at' => now(),
+                    'last_updated_at' => now(),
                 ]
             );
         }
@@ -187,7 +187,6 @@ class FlightUpdateService
     {
         $taxes = [];
         
-        // Parse: "I6:30000.0$V0:619000.0$HL:69000.0$LP:70000.0"
         $parts = explode('$', $taxString);
         
         foreach ($parts as $part) {
