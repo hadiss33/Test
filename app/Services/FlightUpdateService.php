@@ -22,7 +22,7 @@ class FlightUpdateService
 
     public function updateByPriority(int $priority): array
     {
-        $stats = ['checked' => 0, 'updated' => 0, 'errors' => 0];
+        $stats = ['checked' => 0, 'updated' => 0, 'skipped' => 0, 'errors' => 0];
 
         $routes = \App\Models\AirlineActiveRoute::where('iata', $this->iata)
             ->where('service', $this->service)
@@ -37,7 +37,6 @@ class FlightUpdateService
                 }
 
                 try {
-                    // دریافت لیست پروازها
                     $flights = $this->provider->getAvailabilityFare(
                         $route->origin,
                         $route->destination,
@@ -47,8 +46,11 @@ class FlightUpdateService
                     foreach ($flights as $flightData) {
                         DB::beginTransaction();
                         try {
-                            $this->saveFlightWithClasses($route, $flightData, $priority, $date);
+                            $updateResult = $this->saveFlightWithClasses($route, $flightData, $priority, $date);
+                            
                             $stats['checked']++;
+                            $stats[$updateResult]++;
+                            
                             DB::commit();
                         } catch (\Exception $e) {
                             DB::rollBack();
@@ -70,24 +72,23 @@ class FlightUpdateService
         return $stats;
     }
 
-    protected function saveFlightWithClasses($route, array $data, int $priority, Carbon $date): void
+    protected function saveFlightWithClasses($route, array $data, int $priority, Carbon $date): string
     {
         $departureDateTime = Carbon::parse($data['DepartureDateTime']);
         
-        // 1. ذخیره/به‌روزرسانی Flight اصلی
-        $flight = Flight::updateOrCreate(
-            [
-                'airline_active_route_id' => $route->id,
-                'flight_number' => $data['FlightNo'],
-                'departure_datetime' => $departureDateTime,
-            ],
-            [
-                'aircraft_type' => $data['AircraftTypeCode'] ?? null,
-                'update_priority' => $priority,
-                'last_updated_at' => now(),
-            ]
-        );
+        $flight = Flight::firstOrNew([
+            'airline_active_route_id' => $route->id,
+            'flight_number' => $data['FlightNo'],
+            'departure_datetime' => $departureDateTime,
+        ]);
 
+        $isNew = !$flight->exists;
+        
+        $flight->aircraft_type = $data['AircraftTypeCode'] ?? null;
+        $flight->update_priority = $priority;
+        $flight->last_updated_at = now();
+        $flight->missing_count = 0; 
+        $flight->save();
 
         FlightDetail::updateOrCreate(
             ['flight_id' => $flight->id],
@@ -96,15 +97,22 @@ class FlightUpdateService
                     ? Carbon::parse($data['ArrivalDateTime']) 
                     : null,
                 'has_transit' => $data['Transit'] ?? false,
+                'last_updated_at' => now(),
             ]
         );
 
+        $hasChanges = false;
+        
         foreach ($data['ClassesStatus'] as $classData) {
-            $this->saveFlightClass($flight, $route, $classData, $date);
+            $changed = $this->saveFlightClass($flight, $route, $classData, $date);
+            if ($changed) $hasChanges = true;
         }
+
+        return $isNew ? 'updated' : ($hasChanges ? 'updated' : 'skipped');
     }
 
-    protected function saveFlightClass(Flight $flight, $route, array $classData, Carbon $date): void
+
+    protected function saveFlightClass(Flight $flight, $route, array $classData, Carbon $date): bool
     {
         $cap = $classData['Cap'];
         $classCode = $classData['FlightClass'];
@@ -117,47 +125,55 @@ class FlightUpdateService
             $flight->flight_number
         );
 
-        // ذخیره FlightClass
-        $flightClass = FlightClass::updateOrCreate(
-            [
+        $newData = [
+            'class_status' => $cap,
+            'price_adult' => $fareData['AdultTotalPrice'] ?? 0,
+            'price_child' => $fareData['ChildTotalPrice'] ?? 0,
+            'price_infant' => $fareData['InfantTotalPrice'] ?? 0,
+            'available_seats' => $this->provider->parseAvailableSeats($cap),
+            'status' => $this->provider->determineStatus($cap),
+            'last_updated_at' => now(),
+        ];
+
+        $flightClass = FlightClass::where('flight_id', $flight->id)
+            ->where('class_code', $classCode)
+            ->first();
+
+        if (!$flightClass) {
+            $flightClass = FlightClass::create(array_merge([
                 'flight_id' => $flight->id,
                 'class_code' => $classCode,
-            ],
-            [
-                'class_status' => $cap,
-                'price_adult' => $fareData['AdultTotalPrice'] ?? 0,
-                'price_child' => $fareData['ChildTotalPrice'] ?? 0,
-                'price_infant' => $fareData['InfantTotalPrice'] ?? 0,
-                'available_seats' => $this->provider->parseAvailableSeats($cap),
-                'status' => $this->provider->determineStatus($cap),
-                'last_updated_at' => now(),
-            ]
-        );
+            ], $newData));
 
-        // ذخیره Fare Breakdown
-        if ($fareData) {
-            $this->saveFareBreakdown($flightClass, $fareData);
+            if ($fareData) {
+                $this->saveFareBreakdown($flightClass, $fareData);
+            }
+            
+            return true;
         }
+
+        $hasChanges = 
+            $flightClass->price_adult != $newData['price_adult'] ||
+            $flightClass->available_seats != $newData['available_seats'] ||
+            $flightClass->status != $newData['status'];
+
+        if ($hasChanges) {
+            $flightClass->update($newData);
+            
+            if ($fareData) {
+                $this->saveFareBreakdown($flightClass, $fareData);
+            }
+        }
+
+        return $hasChanges;
     }
 
     protected function saveFareBreakdown(FlightClass $flightClass, array $fareData): void
     {
         $passengerTypes = [
-            'adult' => [
-                'base' => 'AdultFare',
-                'taxes' => 'AdultTaxes',
-                'total' => 'AdultTotalPrice'
-            ],
-            'child' => [
-                'base' => 'ChildFare',
-                'taxes' => 'ChildTaxes',
-                'total' => 'ChildTotalPrice'
-            ],
-            'infant' => [
-                'base' => 'InfantFare',
-                'taxes' => 'InfantTaxes',
-                'total' => 'InfantTotalPrice'
-            ]
+            'adult' => ['base' => 'AdultFare', 'taxes' => 'AdultTaxes', 'total' => 'AdultTotalPrice'],
+            'child' => ['base' => 'ChildFare', 'taxes' => 'ChildTaxes', 'total' => 'ChildTotalPrice'],
+            'infant' => ['base' => 'InfantFare', 'taxes' => 'InfantTaxes', 'total' => 'InfantTotalPrice']
         ];
 
         foreach ($passengerTypes as $type => $keys) {
@@ -166,10 +182,7 @@ class FlightUpdateService
             $taxes = $this->parseTaxes($fareData[$keys['taxes']] ?? '');
             
             FlightFareBreakdown::updateOrCreate(
-                [
-                    'flight_class_id' => $flightClass->id,
-                    'passenger_type' => $type,
-                ],
+                ['flight_class_id' => $flightClass->id, 'passenger_type' => $type],
                 [
                     'base_fare' => $fareData[$keys['base']],
                     'tax_i6' => $taxes['I6'] ?? 0,
@@ -186,7 +199,6 @@ class FlightUpdateService
     protected function parseTaxes(string $taxString): array
     {
         $taxes = [];
-        
         $parts = explode('$', $taxString);
         
         foreach ($parts as $part) {

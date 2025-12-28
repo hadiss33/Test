@@ -59,13 +59,8 @@ class RouteSyncService
                 $routes[$key] = [
                     'origin' => $origin,
                     'destination' => $destination,
-                    'monday' => false,
-                    'tuesday' => false,
-                    'wednesday' => false,
-                    'thursday' => false,
-                    'friday' => false,
-                    'saturday' => false,
-                    'sunday' => false,
+                    'monday' => false, 'tuesday' => false, 'wednesday' => false,
+                    'thursday' => false, 'friday' => false, 'saturday' => false, 'sunday' => false,
                 ];
             }
 
@@ -114,3 +109,4 @@ class RouteSyncService
         }
     }
 }
+

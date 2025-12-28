@@ -15,12 +15,14 @@ class Flight extends Model
         'departure_datetime',
         'aircraft_type',
         'update_priority',
+        'missing_count',  
         'last_updated_at',
     ];
 
     protected $casts = [
         'departure_datetime' => 'datetime',
         'last_updated_at' => 'datetime',
+        'missing_count' => 'integer',
     ];
 
     public function route()
@@ -38,7 +40,7 @@ class Flight extends Model
         return $this->hasOne(FlightDetail::class);
     }
 
-
+    // Helpers
     public function getFlightDateAttribute(): string
     {
         return $this->departure_datetime->toDateString();
@@ -59,6 +61,18 @@ class Flight extends Model
         return 4;
     }
 
+
+    public function isMissing(): bool
+    {
+        return $this->missing_count > 0;
+    }
+
+
+    public function shouldBeDeleted(): bool
+    {
+        return $this->missing_count >= 2;
+    }
+
     public function scopeUpcoming($query)
     {
         return $query->where('departure_datetime', '>=', now());
@@ -72,5 +86,10 @@ class Flight extends Model
     public function scopeOnDate($query, Carbon $date)
     {
         return $query->whereDate('departure_datetime', $date->toDateString());
+    }
+
+    public function scopeMissing($query)
+    {
+        return $query->where('missing_count', '>', 0);
     }
 }
