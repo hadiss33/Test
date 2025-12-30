@@ -19,7 +19,6 @@ class NiraProvider implements FlightProviderInterface
         ]);
     }
 
-
     public function getFlightsSchedule(string $fromDate, string $toDate): array
     {
         $url = $this->config['base_url_ws1'] . '/NRSCWS.jsp';
@@ -45,7 +44,6 @@ class NiraProvider implements FlightProviderInterface
         }
     }
 
-
     public function getAvailabilityFare(string $origin, string $destination, string $date): array
     {
         $url = $this->config['base_url_ws1'] . '/AvailabilityFareJS.jsp';
@@ -58,8 +56,8 @@ class NiraProvider implements FlightProviderInterface
                     'cbTarget' => $destination,
                     'DepartureDate' => $date,
                     'cbAdultQty' => 1,
-                    'cbChildQty' => 1,
-                    'cbInfantQty' => 1,
+                    'cbChildQty' =>0,
+                    'cbInfantQty' => 0,
                     'OfficeUser' => $this->config['office_user'],
                     'OfficePass' => $this->config['office_pass'],
                 ]
@@ -73,7 +71,6 @@ class NiraProvider implements FlightProviderInterface
             return [];
         }
     }
-
 
     public function getFare(string $origin, string $destination, string $flightClass, string $date, string $flightNo = ''): ?array
     {
@@ -115,34 +112,49 @@ class NiraProvider implements FlightProviderInterface
     }
 
 
-    public function parseAvailableSeats(string $capacity): int
+    public function parseAvailableSeats(string $cap, string $flightClass): int
     {
-        if ($capacity === 'A' || str_contains($capacity, 'A')) {
+        if (str_starts_with($cap, $flightClass)) {
+            $cap = substr($cap, strlen($flightClass));
+        }
+
+        if ($cap === '') {
+            return 0;
+        }
+
+        if ($cap === 'A') {
             return 9;
         }
-        
-        if (preg_match('/\d+/', $capacity, $matches)) {
-            return (int) $matches[0];
+
+        if (is_numeric($cap)) {
+            return (int) $cap;
         }
-        
+
         return 0;
     }
 
 
     public function determineStatus(string $capacity): string
     {
-        if (str_contains($capacity, 'X')) {
+        $statusChar = substr($capacity, -1);
+        
+
+        if ($statusChar === 'X') {
             return 'cancelled';
         }
-        
-        if (str_contains($capacity, 'C')) {
+
+        if ($statusChar === 'C') {
             return 'closed';
         }
-        
-        if ($capacity === '0' || preg_match('/^[A-Z]+0$/', $capacity)) {
+
+        if ($statusChar === '0') {
             return 'full';
         }
-        
-        return 'active';
+
+        if ($statusChar === 'A' || is_numeric($statusChar)) {
+            return 'active';
+        }
+
+        return 'closed';
     }
 }

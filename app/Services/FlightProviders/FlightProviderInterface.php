@@ -11,7 +11,7 @@ interface FlightProviderInterface
 
     public function getFare(string $origin, string $destination, string $flightClass, string $date, string $flightNo = ''): ?array;
 
-    public function parseAvailableSeats(string $capacity): int;
+    public function parseAvailableSeats(string $cap, string $flightClass): int;
 
     public function determineStatus(string $capacity): string;
 }

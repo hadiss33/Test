@@ -2,7 +2,7 @@
 
 namespace App\Services;
 
-use App\Models\{Flight, FlightClass, FlightDetail, FlightRawData, FlightFareBreakdown};
+use App\Models\{Flight, FlightClass, FlightDetail, FlightFareBreakdown};
 use App\Services\FlightProviders\FlightProviderInterface;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\{DB, Log};
@@ -57,7 +57,8 @@ class FlightUpdateService
                             $stats['errors']++;
                             Log::error("Save Flight Error: " . $e->getMessage(), [
                                 'flight_no' => $flightData['FlightNo'] ?? 'unknown',
-                                'route' => "{$route->origin}-{$route->destination}"
+                                'route' => "{$route->origin}-{$route->destination}",
+                                'trace' => $e->getTraceAsString()
                             ]);
                         }
                     }
@@ -87,7 +88,7 @@ class FlightUpdateService
         $flight->aircraft_type = $data['AircraftTypeCode'] ?? null;
         $flight->update_priority = $priority;
         $flight->last_updated_at = now();
-        $flight->missing_count = 0; 
+        $flight->missing_count = 0;
         $flight->save();
 
         FlightDetail::updateOrCreate(
@@ -111,26 +112,38 @@ class FlightUpdateService
         return $isNew ? 'updated' : ($hasChanges ? 'updated' : 'skipped');
     }
 
-
     protected function saveFlightClass(Flight $flight, $route, array $classData, Carbon $date): bool
     {
-        $cap = $classData['Cap'];
-        $classCode = $classData['FlightClass'];
+
+        $cap = $classData['Cap']; 
+        $classCode = $classData['FlightClass']; 
+        $fareData = null;
+        $price = $classData['Price'] ?? '0';
         
-        $fareData = $this->provider->getFare(
-            $route->origin,
-            $route->destination,
-            $classCode,
-            $date->format('Y-m-d'),
-            $flight->flight_number
-        );
+        if ($price !== '-' && is_numeric($price) && $price > 0) {
+            $priceAdult = (float) $price;
+            $priceChild = 0;
+            $priceInfant = 0;
+        } else {
+            $fareData = $this->provider->getFare(
+                $route->origin,
+                $route->destination,
+                $classCode,
+                $date->format('Y-m-d'),
+                $flight->flight_number
+            );
+            
+            $priceAdult = $fareData['AdultTotalPrice'] ?? 0;
+            $priceChild = $fareData['ChildTotalPrice'] ?? 0;
+            $priceInfant = $fareData['InfantTotalPrice'] ?? 0;
+        }
 
         $newData = [
             'class_status' => $cap,
-            'price_adult' => $fareData['AdultTotalPrice'] ?? 0,
-            'price_child' => $fareData['ChildTotalPrice'] ?? 0,
-            'price_infant' => $fareData['InfantTotalPrice'] ?? 0,
-            'available_seats' => $this->provider->parseAvailableSeats($cap),
+            'price_adult' => $priceAdult,
+            'price_child' => $priceChild,
+            'price_infant' => $priceInfant,
+            'available_seats' => $this->provider->parseAvailableSeats($cap , $classCode),
             'status' => $this->provider->determineStatus($cap),
             'last_updated_at' => now(),
         ];
@@ -153,6 +166,7 @@ class FlightUpdateService
         }
 
         $hasChanges = 
+            $flightClass->class_status != $newData['class_status'] ||
             $flightClass->price_adult != $newData['price_adult'] ||
             $flightClass->available_seats != $newData['available_seats'] ||
             $flightClass->status != $newData['status'];
@@ -160,6 +174,7 @@ class FlightUpdateService
         if ($hasChanges) {
             $flightClass->update($newData);
             
+            // ذخیره Fare Breakdown
             if ($fareData) {
                 $this->saveFareBreakdown($flightClass, $fareData);
             }
