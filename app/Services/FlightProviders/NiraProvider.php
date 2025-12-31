@@ -92,21 +92,7 @@ class NiraProvider implements FlightProviderInterface
                     ]
                 ]);
                 
-                $responseBody = $response->getBody()->getContents();
-                
-                // Fix UTF-8 encoding issues
-                $responseBody = $this->fixUtf8Encoding($responseBody);
-                
-                $data = json_decode($responseBody, true);
-                
-                if (json_last_error() !== JSON_ERROR_NONE) {
-                    Log::error("Nira Fare JSON Error [{$this->config['code']}]", [
-                        'error' => json_last_error_msg(),
-                        'route' => "{$origin}-{$destination}",
-                        'class' => $flightClass
-                    ]);
-                    return null;
-                }
+                $data = json_decode($response->getBody()->getContents(), true);
                 
                 if (isset($data['Error']) || empty($data)) {
                     return null;
@@ -125,71 +111,6 @@ class NiraProvider implements FlightProviderInterface
         });
     }
 
-    /**
-     * Fix UTF-8 encoding issues in API response
-     */
-    protected function fixUtf8Encoding(string $text): string
-    {
-        // Try multiple encoding fixes
-        
-        // Method 1: Convert from Windows-1256 (Arabic/Persian encoding)
-        if (function_exists('mb_convert_encoding')) {
-            $converted = @mb_convert_encoding($text, 'UTF-8', 'Windows-1256');
-            if ($converted !== false && $this->isValidJson($converted)) {
-                return $converted;
-            }
-        }
-        
-        // Method 2: Convert from ISO-8859-1
-        if (function_exists('utf8_encode')) {
-            $converted = @utf8_encode($text);
-            if ($this->isValidJson($converted)) {
-                return $converted;
-            }
-        }
-        
-        // Method 3: Try iconv
-        if (function_exists('iconv')) {
-            $encodings = ['Windows-1256', 'ISO-8859-1', 'CP1256', 'UTF-16'];
-            foreach ($encodings as $encoding) {
-                $converted = @iconv($encoding, 'UTF-8//IGNORE', $text);
-                if ($converted !== false && $this->isValidJson($converted)) {
-                    return $converted;
-                }
-            }
-        }
-        
-        // Method 4: Remove invalid UTF-8 characters
-        if (function_exists('mb_check_encoding')) {
-            if (!mb_check_encoding($text, 'UTF-8')) {
-                // Remove invalid characters
-                $text = mb_convert_encoding($text, 'UTF-8', 'UTF-8');
-            }
-        }
-        
-        // Last resort: Remove all non-ASCII and non-UTF8 characters from strings but keep numbers and structure
-        $text = preg_replace_callback('/"([^"]+)"/', function($matches) {
-            // Only clean the actual string values, not the structure
-            $value = $matches[1];
-            // If it's purely numeric or looks like a key, don't touch it
-            if (is_numeric($value) || preg_match('/^[a-zA-Z_]+$/', $value)) {
-                return $matches[0];
-            }
-            // Otherwise, remove invalid UTF-8
-            return '"' . preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x80-\xFF]/', '', $value) . '"';
-        }, $text);
-        
-        return $text;
-    }
-
-    /**
-     * Check if string is valid JSON
-     */
-    protected function isValidJson(string $text): bool
-    {
-        json_decode($text);
-        return json_last_error() === JSON_ERROR_NONE;
-    }
 
     public function parseAvailableSeats(string $cap, string $flightClass): int
     {
@@ -212,9 +133,11 @@ class NiraProvider implements FlightProviderInterface
         return 0;
     }
 
+
     public function determineStatus(string $capacity): string
     {
         $statusChar = substr($capacity, -1);
+        
 
         if ($statusChar === 'X') {
             return 'cancelled';
