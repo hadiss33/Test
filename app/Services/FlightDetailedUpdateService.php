@@ -27,7 +27,9 @@ class FlightDetailedUpdateService
             'updated' => 0,
             'skipped' => 0,
             'errors' => 0,
-            'fare_calls' => 0
+            'fare_calls' => 0,
+            'fare_success' => 0,
+            'fare_failed' => 0,
         ];
 
         $routes = AirlineActiveRoute::where('iata', $this->iata)
@@ -36,6 +38,12 @@ class FlightDetailedUpdateService
             
         $dates = $this->getDatesForPriority($priority);
 
+        Log::info("Starting detailed update for {$this->iata}", [
+            'priority' => $priority,
+            'routes_count' => $routes->count(),
+            'dates_count' => count($dates)
+        ]);
+
         foreach ($routes as $route) {
             foreach ($dates as $date) {
                 if (!$route->hasFlightOnDate($date)) {
@@ -43,12 +51,17 @@ class FlightDetailedUpdateService
                 }
 
                 try {
-                    // استفاده از AvailabilityFare برای گرفتن لیست پروازها
                     $flights = $this->provider->getAvailabilityFare(
                         $route->origin,
                         $route->destination,
                         $date->format('Y-m-d')
                     );
+
+                    Log::info("Fetched flights for route", [
+                        'route' => "{$route->origin}-{$route->destination}",
+                        'date' => $date->format('Y-m-d'),
+                        'flights_count' => count($flights)
+                    ]);
 
                     foreach ($flights as $flightData) {
                         DB::beginTransaction();
@@ -63,6 +76,8 @@ class FlightDetailedUpdateService
                             $stats['checked']++;
                             $stats[$updateResult['status']]++;
                             $stats['fare_calls'] += $updateResult['fare_calls'];
+                            $stats['fare_success'] += $updateResult['fare_success'];
+                            $stats['fare_failed'] += $updateResult['fare_failed'];
                             
                             DB::commit();
                         } catch (\Exception $e) {
@@ -84,6 +99,8 @@ class FlightDetailedUpdateService
             }
         }
 
+        Log::info("Detailed update completed", $stats);
+
         return $stats;
     }
 
@@ -91,7 +108,6 @@ class FlightDetailedUpdateService
     {
         $departureDateTime = Carbon::parse($data['DepartureDateTime']);
         
-        // ذخیره پرواز
         $flight = Flight::firstOrNew([
             'airline_active_route_id' => $route->id,
             'flight_number' => $data['FlightNo'],
@@ -106,34 +122,47 @@ class FlightDetailedUpdateService
         $flight->missing_count = 0;
         $flight->save();
 
-        // گرفتن اولین کلاس فعال برای دریافت اطلاعات کامل از Fare API
-        $firstActiveClass = null;
+        // پیدا کردن اولین کلاس برای گرفتن اطلاعات details
+        $firstClass = null;
         $fareDataForDetails = null;
         
         if (!empty($data['ClassesStatus'])) {
-            foreach ($data['ClassesStatus'] as $classData) {
-                $status = $this->provider->determineStatus($classData['Cap']);
-                if ($status === 'active') {
-                    $firstActiveClass = $classData['FlightClass'];
-                    
-                    // یک بار Fare API را صدا می‌زنیم برای گرفتن اطلاعات تکمیلی
-                    $fareDataForDetails = $this->provider->getFare(
-                        $route->origin,
-                        $route->destination,
-                        $firstActiveClass,
-                        $date->format('Y-m-d'),
-                        $flight->flight_number
-                    );
-                    break;
-                }
+            // اولین کلاس را انتخاب می‌کنیم (مهم نیست فعال باشه یا نه)
+            $firstClassData = $data['ClassesStatus'][0];
+            $firstClass = $firstClassData['FlightClass'];
+            
+            Log::info("Fetching Fare for flight details", [
+                'flight_no' => $data['FlightNo'],
+                'class' => $firstClass,
+                'route' => "{$route->origin}-{$route->destination}"
+            ]);
+            
+            $fareDataForDetails = $this->provider->getFare(
+                $route->origin,
+                $route->destination,
+                $firstClass,
+                $date->format('Y-m-d'),
+                $flight->flight_number
+            );
+            
+            if ($fareDataForDetails) {
+                Log::info("Fare API success for details", [
+                    'flight_no' => $data['FlightNo'],
+                    'fare_keys' => array_keys($fareDataForDetails)
+                ]);
+            } else {
+                Log::warning("Fare API returned null for details", [
+                    'flight_no' => $data['FlightNo'],
+                    'class' => $firstClass
+                ]);
             }
         }
 
-        // ذخیره جزئیات پرواز با اطلاعات از Fare API
         $this->saveFlightDetails($flight, $data, $fareDataForDetails);
 
-        // ذخیره کلاس‌ها
-        $fareCallsCount = $firstActiveClass ? 1 : 0; // یک بار برای details
+        $fareCallsCount = $firstClass ? 1 : 0;
+        $fareSuccessCount = $fareDataForDetails ? 1 : 0;
+        $fareFailedCount = $firstClass && !$fareDataForDetails ? 1 : 0;
         $hasChanges = false;
         
         foreach ($data['ClassesStatus'] as $classData) {
@@ -148,28 +177,45 @@ class FlightDetailedUpdateService
                 $hasChanges = true;
             }
             $fareCallsCount += $result['fare_calls'];
+            $fareSuccessCount += $result['fare_success'];
+            $fareFailedCount += $result['fare_failed'];
         }
 
         return [
             'status' => $isNew ? 'updated' : ($hasChanges ? 'updated' : 'skipped'),
-            'fare_calls' => $fareCallsCount
+            'fare_calls' => $fareCallsCount,
+            'fare_success' => $fareSuccessCount,
+            'fare_failed' => $fareFailedCount,
         ];
     }
 
     protected function saveFlightDetails(Flight $flight, array $availabilityData, ?array $fareData): void
     {
+        Log::info("Saving flight details", [
+            'flight_id' => $flight->id,
+            'has_fareData' => $fareData !== null,
+            'fareData_keys' => $fareData ? array_keys($fareData) : []
+        ]);
+
         $detailData = [
             'arrival_datetime' => isset($availabilityData['ArrivalDateTime']) 
                 ? Carbon::parse($availabilityData['ArrivalDateTime']) 
                 : null,
             'has_transit' => $availabilityData['Transit'] ?? false,
-            'transit_city' => null, // این فیلد در API نیرا وجود ندارد
-            'operating_airline' => null, // این فیلد در API نیرا وجود ندارد  
-            'operating_flight_no' => null, // این فیلد در API نیرا وجود ندارد
-            'refund_rules' => $fareData['CRCNRules'] ?? null, // از Fare API
-            'baggage_weight' => $fareData['BaggageAllowanceWeight'] ?? null, // از Fare API
-            'baggage_pieces' => $fareData['BaggageAllowancePieces'] ?? null, // از Fare API
+            'transit_city' => null,
+            'operating_airline' => null,
+            'operating_flight_no' => null,
+            'refund_rules' => $fareData['CRCNRules'] ?? null,
+            'baggage_weight' => $fareData['BaggageAllowanceWeight'] ?? null,
+            'baggage_pieces' => $fareData['BaggageAllowancePieces'] ?? null,
         ];
+
+        Log::info("Flight detail data to save", [
+            'flight_id' => $flight->id,
+            'refund_rules_length' => $detailData['refund_rules'] ? strlen($detailData['refund_rules']) : 0,
+            'baggage_weight' => $detailData['baggage_weight'],
+            'baggage_pieces' => $detailData['baggage_pieces'],
+        ]);
 
         FlightDetail::updateOrCreate(
             ['flight_id' => $flight->id],
@@ -186,58 +232,69 @@ class FlightDetailedUpdateService
         $cap = $classData['Cap'];
         $classCode = $classData['FlightClass'];
         $fareCallsCount = 0;
+        $fareSuccessCount = 0;
+        $fareFailedCount = 0;
         
-        // بررسی وضعیت کلاس - اگر بسته است Fare API نمی‌زنیم
         $status = $this->provider->determineStatus($cap);
         $availableSeats = $this->provider->parseAvailableSeats($cap, $classCode);
         
+        Log::info("Processing class", [
+            'flight_no' => $flight->flight_number,
+            'class' => $classCode,
+            'cap' => $cap,
+            'status' => $status,
+            'seats' => $availableSeats
+        ]);
+
         $fareData = null;
         $priceAdult = 0;
         $priceChild = 0;
         $priceInfant = 0;
 
-        // فقط برای کلاس‌های فعال Fare API را صدا می‌زنیم
-        if ($status === 'active' && $availableSeats > 0) {
-            $price = $classData['Price'] ?? '0';
+        // همیشه Fare API را صدا می‌زنیم، بدون توجه به status
+        $price = $classData['Price'] ?? '0';
+        
+        if ($price !== '-' && is_numeric($price) && $price > 0) {
+            $priceAdult = (float) $price;
+        }
+
+        // حالا همیشه Fare API را صدا می‌زنیم
+        Log::info("Calling Fare API for class", [
+            'flight_no' => $flight->flight_number,
+            'class' => $classCode
+        ]);
+
+        $fareData = $this->provider->getFare(
+            $route->origin,
+            $route->destination,
+            $classCode,
+            $date->format('Y-m-d'),
+            $flight->flight_number
+        );
+        
+        $fareCallsCount++;
+        
+        if ($fareData) {
+            $fareSuccessCount++;
+            $priceAdult = $fareData['AdultTotalPrice'] ?? $priceAdult;
+            $priceChild = $fareData['ChildTotalPrice'] ?? 0;
+            $priceInfant = $fareData['InfantTotalPrice'] ?? 0;
             
-            // اگر قیمت در AvailabilityFare موجود است
-            if ($price !== '-' && is_numeric($price) && $price > 0) {
-                $priceAdult = (float) $price;
-                
-                // برای گرفتن قیمت child و infant باید Fare API را صدا بزنیم
-                $fareData = $this->provider->getFare(
-                    $route->origin,
-                    $route->destination,
-                    $classCode,
-                    $date->format('Y-m-d'),
-                    $flight->flight_number
-                );
-                
-                $fareCallsCount++;
-                
-                if ($fareData) {
-                    $priceAdult = $fareData['AdultTotalPrice'] ?? $priceAdult;
-                    $priceChild = $fareData['ChildTotalPrice'] ?? 0;
-                    $priceInfant = $fareData['InfantTotalPrice'] ?? 0;
-                }
-            } else {
-                // اگر قیمت نیست، حتماً باید Fare API را صدا بزنیم
-                $fareData = $this->provider->getFare(
-                    $route->origin,
-                    $route->destination,
-                    $classCode,
-                    $date->format('Y-m-d'),
-                    $flight->flight_number
-                );
-                
-                $fareCallsCount++;
-                
-                if ($fareData) {
-                    $priceAdult = $fareData['AdultTotalPrice'] ?? 0;
-                    $priceChild = $fareData['ChildTotalPrice'] ?? 0;
-                    $priceInfant = $fareData['InfantTotalPrice'] ?? 0;
-                }
-            }
+            Log::info("Fare API success for class", [
+                'flight_no' => $flight->flight_number,
+                'class' => $classCode,
+                'adult' => $priceAdult,
+                'child' => $priceChild,
+                'infant' => $priceInfant
+            ]);
+        } else {
+            $fareFailedCount++;
+            Log::warning("Fare API failed for class", [
+                'flight_no' => $flight->flight_number,
+                'class' => $classCode,
+                'cap' => $cap,
+                'status' => $status
+            ]);
         }
 
         $newData = [
@@ -255,21 +312,23 @@ class FlightDetailedUpdateService
             ->first();
 
         if (!$flightClass) {
-            // ایجاد کلاس جدید
             $flightClass = FlightClass::create(array_merge([
                 'flight_id' => $flight->id,
                 'class_code' => $classCode,
             ], $newData));
 
-            // ذخیره Fare Breakdown فقط اگر fareData موجود باشد
             if ($fareData) {
                 $this->saveFareBreakdown($flightClass, $fareData);
             }
             
-            return ['changed' => true, 'fare_calls' => $fareCallsCount];
+            return [
+                'changed' => true,
+                'fare_calls' => $fareCallsCount,
+                'fare_success' => $fareSuccessCount,
+                'fare_failed' => $fareFailedCount,
+            ];
         }
 
-        // بررسی تغییرات
         $hasChanges = 
             $flightClass->class_status != $newData['class_status'] ||
             $flightClass->price_adult != $newData['price_adult'] ||
@@ -282,12 +341,16 @@ class FlightDetailedUpdateService
             $flightClass->update($newData);
         }
 
-        // ذخیره Fare Breakdown فقط اگر fareData موجود باشد
         if ($fareData) {
             $this->saveFareBreakdown($flightClass, $fareData);
         }
 
-        return ['changed' => $hasChanges, 'fare_calls' => $fareCallsCount];
+        return [
+            'changed' => $hasChanges,
+            'fare_calls' => $fareCallsCount,
+            'fare_success' => $fareSuccessCount,
+            'fare_failed' => $fareFailedCount,
+        ];
     }
 
     protected function saveFareBreakdown(FlightClass $flightClass, array $fareData): void
@@ -300,25 +363,36 @@ class FlightDetailedUpdateService
 
         foreach ($passengerTypes as $type => $keys) {
             if (!isset($fareData[$keys['base']])) {
+                Log::info("Skipping fare breakdown for {$type} - no base fare", [
+                    'class_id' => $flightClass->id,
+                    'available_keys' => array_keys($fareData)
+                ]);
                 continue;
             }
 
             $taxes = $this->parseTaxes($fareData[$keys['taxes']] ?? '');
             
+            $breakdownData = [
+                'base_fare' => $fareData[$keys['base']],
+                'tax_i6' => $taxes['I6'] ?? 0,
+                'tax_v0' => $taxes['V0'] ?? 0,
+                'tax_hl' => $taxes['HL'] ?? 0,
+                'tax_lp' => $taxes['LP'] ?? 0,
+                'total_price' => $fareData[$keys['total']],
+                'last_updated_at' => now(),
+            ];
+
+            Log::info("Saving fare breakdown for {$type}", [
+                'class_id' => $flightClass->id,
+                'data' => $breakdownData
+            ]);
+
             FlightFareBreakdown::updateOrCreate(
                 [
                     'flight_class_id' => $flightClass->id,
                     'passenger_type' => $type
                 ],
-                [
-                    'base_fare' => $fareData[$keys['base']],
-                    'tax_i6' => $taxes['I6'] ?? 0,
-                    'tax_v0' => $taxes['V0'] ?? 0,
-                    'tax_hl' => $taxes['HL'] ?? 0,
-                    'tax_lp' => $taxes['LP'] ?? 0,
-                    'total_price' => $fareData[$keys['total']],
-                    'last_updated_at' => now(),
-                ]
+                $breakdownData
             );
         }
     }
@@ -326,12 +400,9 @@ class FlightDetailedUpdateService
     protected function parseTaxes(string $taxString): array
     {
         $taxes = [];
-        
-        // فرمت: "I6:30000.0,EN_Desc:...$V0:495000.0,EN_Desc:...$HL:55000.0..."
         $parts = explode('$', $taxString);
         
         foreach ($parts as $part) {
-            // پیدا کردن کد مالیات و مقدار آن
             if (preg_match('/([A-Z0-9]+):([0-9.]+)/', $part, $matches)) {
                 $taxes[$matches[1]] = (float) $matches[2];
             }
