@@ -8,6 +8,7 @@ class FlightFareBreakdown extends Model
 {
     public $timestamps = false;
 
+
     protected $fillable = [
         'flight_class_id',
         'passenger_type',
@@ -16,6 +17,7 @@ class FlightFareBreakdown extends Model
         'tax_v0',
         'tax_hl',
         'tax_lp',
+        'tax_yq', 
         'total_price',
         'last_updated_at',
     ];

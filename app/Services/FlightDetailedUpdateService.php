@@ -19,9 +19,6 @@ class FlightDetailedUpdateService
         $this->service = $service;
     }
 
-    /**
-     * تکمیل اطلاعات ناقص پروازها
-     */
     public function fillMissingData(): array
     {
         $stats = [
@@ -32,225 +29,135 @@ class FlightDetailedUpdateService
             'errors' => 0
         ];
 
-        // پیدا کردن پروازهای ناقص
+        // پیدا کردن پروازها - برای تست شرط upcoming حذف شد
         $incompleteFlights = Flight::with(['route', 'classes', 'details'])
             ->whereHas('route', function($q) {
                 $q->where('iata', $this->iata)
                   ->where('service', $this->service);
             })
-            ->upcoming()
             ->get();
+
+        Log::info("Processing {$incompleteFlights->count()} flights for {$this->iata}");
 
         foreach ($incompleteFlights as $flight) {
             try {
                 DB::beginTransaction();
-                
                 $stats['flights_checked']++;
                 
-                // بررسی و تکمیل هر کلاس
                 foreach ($flight->classes as $class) {
-                    if ($this->classNeedsFareData($class)) {
-                        $updated = $this->updateClassFareData($flight, $class);
-                        if ($updated) $stats['classes_updated']++;
+                    // 1. آپدیت قیمت‌های اصلی (Price Adult, Child, Infant)
+                    if ($this->updateClassFareData($flight, $class)) {
+                        $stats['classes_updated']++;
                     }
                     
-                    if ($this->classNeedsFareBreakdown($class)) {
-                        $created = $this->createFareBreakdown($flight, $class);
-                        $stats['fare_breakdown_created'] += $created;
-                    }
+                    // 2. ایجاد یا آپدیت Fare Breakdown (Base Fare + Taxes)
+                    $created = $this->createFareBreakdown($flight, $class);
+                    $stats['fare_breakdown_created'] += $created;
                 }
                 
-                // تکمیل جزئیات پرواز
-                if ($this->flightDetailsNeedsUpdate($flight)) {
-                    $updated = $this->updateFlightDetails($flight);
-                    if ($updated) $stats['details_updated']++;
+                // 3. آپدیت جزئیات (Baggage, Refund Rules)
+                if ($this->updateFlightDetails($flight)) {
+                    $stats['details_updated']++;
                 }
                 
                 DB::commit();
-                
             } catch (\Exception $e) {
                 DB::rollBack();
                 $stats['errors']++;
-                Log::error("Detailed update error for flight {$flight->id}: " . $e->getMessage());
+                Log::error("Update failed for flight {$flight->flight_number}: " . $e->getMessage());
             }
         }
 
         return $stats;
     }
 
-    /**
-     * بررسی نیاز به آپدیت قیمت‌ها
-     */
-    protected function classNeedsFareData(FlightClass $class): bool
-    {
-        return $class->price_child == 0 || $class->price_infant == 0;
-    }
-
-    /**
-     * بررسی نیاز به ایجاد Fare Breakdown
-     */
-    protected function classNeedsFareBreakdown(FlightClass $class): bool
-    {
-        return $class->fareBreakdown->isEmpty();
-    }
-
-    /**
-     * بررسی نیاز به آپدیت جزئیات پرواز
-     */
-    protected function flightDetailsNeedsUpdate(Flight $flight): bool
-    {
-        $details = $flight->details;
-        
-        if (!$details) return true;
-        
-        return empty($details->baggage_weight) 
-            || empty($details->baggage_pieces)
-            || empty($details->refund_rules);
-    }
-
-    /**
-     * آپدیت قیمت‌های کودک و نوزاد
-     */
     protected function updateClassFareData(Flight $flight, FlightClass $class): bool
     {
-        $route = $flight->route;
-        $date = $flight->departure_datetime->format('Y-m-d');
-        
-        $fareData = $this->provider->getFare(
-            $route->origin,
-            $route->destination,
-            $class->class_code,
-            $date,
-            $flight->flight_number
-        );
-        
-        if (!$fareData) {
-            Log::warning("No fare data for flight {$flight->flight_number} class {$class->class_code}");
-            return false;
-        }
-        
-        $class->update([
-            'price_adult' => $fareData['AdultTotalPrice'] ?? $class->price_adult,
-            'price_child' => $fareData['ChildTotalPrice'] ?? 0,
-            'price_infant' => $fareData['InfantTotalPrice'] ?? 0,
+        $fareData = $this->getFareFromProvider($flight, $class->class_code);
+        if (!$fareData) return false;
+
+        return $class->update([
+            'price_adult' => (float)($fareData['AdultTotalPrice'] ?? $class->price_adult),
+            'price_child' => (float)($fareData['ChildTotalPrice'] ?? 0),
+            'price_infant' => (float)($fareData['InfantTotalPrice'] ?? 0),
             'last_updated_at' => now(),
         ]);
-        
-        return true;
     }
 
-    /**
-     * ایجاد Fare Breakdown
-     */
     protected function createFareBreakdown(Flight $flight, FlightClass $class): int
     {
-        $route = $flight->route;
-        $date = $flight->departure_datetime->format('Y-m-d');
-        
-        $fareData = $this->provider->getFare(
-            $route->origin,
-            $route->destination,
-            $class->class_code,
-            $date,
-            $flight->flight_number
-        );
-        
-        if (!$fareData) {
-            return 0;
-        }
-        
-        $created = 0;
-        $passengerTypes = [
+        $fareData = $this->getFareFromProvider($flight, $class->class_code);
+        if (!$fareData) return 0;
+
+        $count = 0;
+        $mapping = [
             'adult' => ['base' => 'AdultFare', 'taxes' => 'AdultTaxes', 'total' => 'AdultTotalPrice'],
             'child' => ['base' => 'ChildFare', 'taxes' => 'ChildTaxes', 'total' => 'ChildTotalPrice'],
             'infant' => ['base' => 'InfantFare', 'taxes' => 'InfantTaxes', 'total' => 'InfantTotalPrice']
         ];
 
-        foreach ($passengerTypes as $type => $keys) {
-            if (!isset($fareData[$keys['base']])) continue;
+        foreach ($mapping as $type => $keys) {
+            if (empty($fareData[$keys['base']])) continue;
 
             $taxes = $this->parseTaxes($fareData[$keys['taxes']] ?? '');
             
             FlightFareBreakdown::updateOrCreate(
+                ['flight_class_id' => $class->id, 'passenger_type' => $type],
                 [
-                    'flight_class_id' => $class->id,
-                    'passenger_type' => $type
-                ],
-                [
-                    'base_fare' => $fareData[$keys['base']] ?? 0,
+                    'base_fare' => (float)$fareData[$keys['base']],
                     'tax_i6' => $taxes['I6'] ?? 0,
                     'tax_v0' => $taxes['V0'] ?? 0,
                     'tax_hl' => $taxes['HL'] ?? 0,
                     'tax_lp' => $taxes['LP'] ?? 0,
                     'tax_yq' => $taxes['YQ'] ?? 0,
-                    'total_price' => $fareData[$keys['total']] ?? 0,
+                    'total_price' => (float)$fareData[$keys['total']],
                     'last_updated_at' => now(),
                 ]
             );
-            
-            $created++;
+            $count++;
         }
-        
-        return $created;
+        return $count;
     }
 
-    /**
-     * آپدیت جزئیات پرواز (baggage, refund rules)
-     */
     protected function updateFlightDetails(Flight $flight): bool
     {
-        $route = $flight->route;
-        $date = $flight->departure_datetime->format('Y-m-d');
-        
-        // گرفتن اطلاعات از اولین کلاس موجود
         $firstClass = $flight->classes->first();
         if (!$firstClass) return false;
-        
-        $fareData = $this->provider->getFare(
-            $route->origin,
-            $route->destination,
-            $firstClass->class_code,
-            $date,
-            $flight->flight_number
-        );
-        
+
+        $fareData = $this->getFareFromProvider($flight, $firstClass->class_code);
         if (!$fareData) return false;
-        
+
         $details = $flight->details ?: new FlightDetail(['flight_id' => $flight->id]);
-        
-        // آپدیت فیلدهای خالی
-        if (empty($details->baggage_weight) && isset($fareData['BaggageAllowanceWeight'])) {
-            $details->baggage_weight = $fareData['BaggageAllowanceWeight'];
-        }
-        
-        if (empty($details->baggage_pieces) && isset($fareData['BaggageAllowancePieces'])) {
-            $details->baggage_pieces = $fareData['BaggageAllowancePieces'];
-        }
-        
-        if (empty($details->refund_rules) && isset($fareData['CRCNRules'])) {
-            $details->refund_rules = $fareData['CRCNRules'];
-        }
-        
+        $details->baggage_weight = $fareData['BaggageAllowanceWeight'] ?? $details->baggage_weight;
+        $details->baggage_pieces = $fareData['BaggageAllowancePieces'] ?? $details->baggage_pieces;
+        $details->refund_rules = $fareData['CRCNRules'] ?? $details->refund_rules;
         $details->last_updated_at = now();
-        $details->save();
         
-        return true;
+        return $details->save();
     }
 
-    /**
-     * پارس کردن عوارض
-     */
+    protected function getFareFromProvider(Flight $flight, string $classCode)
+    {
+        return $this->provider->getFare(
+            $flight->route->origin,
+            $flight->route->destination,
+            $classCode,
+            $flight->departure_datetime->format('Y-m-d'),
+            $flight->flight_number
+        );
+    }
+
     protected function parseTaxes(string $taxString): array
     {
         $taxes = [];
+        // نیرا از $ برای جدا کردن انواع مالیات استفاده می‌کند
         $parts = explode('$', $taxString);
-        
         foreach ($parts as $part) {
+            // پیدا کردن الگو مثل I6:100000.0 قبل از رسیدن به کاما
             if (preg_match('/([A-Z0-9]+):([0-9.]+)/', $part, $matches)) {
-                $taxes[$matches[1]] = (float) $matches[2];
+                $taxes[strtoupper($matches[1])] = (float)$matches[2];
             }
         }
-        
         return $taxes;
     }
 }

@@ -26,7 +26,8 @@ return new class extends Migration
             $table->decimal('tax_v0', 12, 2)->default(0); 
             $table->decimal('tax_hl', 12, 2)->default(0);
             $table->decimal('tax_lp', 12, 2)->default(0); 
-            
+            $table->decimal('tax_yq', 12, 2)->default(0);
+
             $table->decimal('total_price', 12, 2)->default(0);
             
             $table->timestamp('last_updated_at')->nullable();
