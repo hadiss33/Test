@@ -4,7 +4,8 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\{
     RouteSyncController,
     FlightUpdateController,
-    FlightSearchController
+    FlightSearchController,
+    FlightDetailedUpdateController
 };
 
 
@@ -13,6 +14,8 @@ Route::prefix('routes')->group(function() {
 });
 
 Route::prefix('flights')->group(function() {
+    
+    Route::post('/update-detailed', [FlightDetailedUpdateController::class, 'updateDetailed']);
     
     Route::post('/update', [FlightUpdateController::class, 'update']);
     
