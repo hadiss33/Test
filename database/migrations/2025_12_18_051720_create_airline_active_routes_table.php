@@ -23,18 +23,21 @@ return new class extends Migration
             $table->string('iata');
             $table->string('origin');
             $table->string('destination');
-            $table->string('service');
-            
-            $table->boolean('monday')->default(false);
-            $table->boolean('tuesday')->default(false);
-            $table->boolean('wednesday')->default(false);
-            $table->boolean('thursday')->default(false);
-            $table->boolean('friday')->default(false);
-            $table->boolean('saturday')->default(false);
-            $table->boolean('sunday')->default(false);
-            
+            $table->bigInteger('application_interfaces_id');
+
+            $table->foreign('application_interfaces_id')
+                ->references('id')->on('application_interfaces')->onDelete('cascade');
+
+            $table->boolean('monday')->nullable();
+            $table->boolean('tuesday')->nullable();
+            $table->boolean('wednesday')->nullable();
+            $table->boolean('thursday')->nullable();
+            $table->boolean('friday')->nullable();
+            $table->boolean('saturday')->nullable();
+            $table->boolean('sunday')->nullable();
+
             $table->timestamp('updated_at')->nullable();
-            
+            $table->tinyInteger('priority')->nullable();
             $table->index(['iata', 'origin', 'destination']);
             $table->unique(['iata', 'origin', 'destination']);
         });

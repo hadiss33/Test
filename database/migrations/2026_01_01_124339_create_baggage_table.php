@@ -11,25 +11,15 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('flight_fare_breakdown', function (Blueprint $table) {
+        Schema::create('baggage', function (Blueprint $table) {
             $table->id();
-            
             $table->foreignId('flight_class_id')
                 ->constrained('flight_classes')
                 ->onDelete('cascade');
             
-                
-            $table->decimal('base_fare', 12, 2)->default(0);
-            
 
-
-            $table->decimal('total_adult', 12, 2)->default(0);
-            $table->decimal('total_child', 12, 2)->default(0);
-            $table->decimal('total_infant', 12, 2)->default(0);
-            
-            $table->timestamp('last_updated_at')->nullable();
-            
-       
+            $table->string('baggage_weight', 20)->nullable(); 
+            $table->string('baggage_pieces', 20)->nullable();
         });
     }
 
@@ -38,6 +28,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::dropIfExists('flight_fare_breakdown');
+        Schema::dropIfExists('baggage');
     }
 };

@@ -11,25 +11,21 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('flight_fare_breakdown', function (Blueprint $table) {
+        Schema::create('taxes', function (Blueprint $table) {
             $table->id();
-            
             $table->foreignId('flight_class_id')
                 ->constrained('flight_classes')
                 ->onDelete('cascade');
             
-                
-            $table->decimal('base_fare', 12, 2)->default(0);
-            
+            $table->enum('passenger_type', ['adult', 'child', 'infant']);
 
+            $table->string('tax_code')->nullable();
+            $table->decimal('tax_amount', 12, 2)->nullable();             
+            $table->string('title_en')->nullable(); 
+            $table->string('title_fa')->nullable(); 
 
-            $table->decimal('total_adult', 12, 2)->default(0);
-            $table->decimal('total_child', 12, 2)->default(0);
-            $table->decimal('total_infant', 12, 2)->default(0);
-            
-            $table->timestamp('last_updated_at')->nullable();
-            
-       
+            $table->unique(['flight_class_id', 'passenger_type'], 'unique_fare_breakdown');
+
         });
     }
 
@@ -38,6 +34,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::dropIfExists('flight_fare_breakdown');
+        Schema::dropIfExists('taxes');
     }
 };

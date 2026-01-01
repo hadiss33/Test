@@ -2,8 +2,8 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Model;
 use Carbon\Carbon;
+use Illuminate\Database\Eloquent\Model;
 
 class Flight extends Model
 {
@@ -15,7 +15,7 @@ class Flight extends Model
         'departure_datetime',
         'aircraft_type',
         'update_priority',
-        'missing_count',  
+        'missing_count',
         'last_updated_at',
     ];
 
@@ -27,6 +27,13 @@ class Flight extends Model
 
     public function route()
     {
+        return $this->belongsTo(AirlineActiveRoute::class, 'airline_active_route_id');
+    }
+    // app/Models/Flight.php
+
+    public function activeRoute() // نام متد باید دقیقاً همین باشد
+    {
+        // ارتباط با جدول airline_active_routes از طریق فیلد airline_active_route_id
         return $this->belongsTo(AirlineActiveRoute::class, 'airline_active_route_id');
     }
 
@@ -54,19 +61,24 @@ class Flight extends Model
     public function calculatePriority(): int
     {
         $days = $this->getDaysUntilDeparture();
-        
-        if ($days <= 3) return 1;
-        if ($days <= 7) return 2;
-        if ($days <= 30) return 3;
+
+        if ($days <= 3) {
+            return 1;
+        }
+        if ($days <= 7) {
+            return 2;
+        }
+        if ($days <= 30) {
+            return 3;
+        }
+
         return 4;
     }
-
 
     public function isMissing(): bool
     {
         return $this->missing_count > 0;
     }
-
 
     public function shouldBeDeleted(): bool
     {

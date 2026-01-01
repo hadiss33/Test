@@ -18,16 +18,16 @@ class FlightDetailedUpdateController extends Controller
     }
 
     /**
-     * تکمیل اطلاعات ناقص پروازها
-     * 
-     * POST /api/flights/update-detailed
-     * Body: {
-     *   "service": "nira",
-     *   "airline": "NV" (optional)
+     * بروزرسانی و تکمیل اطلاعات دقیق پروازها (قیمت‌ها، بار، قوانین استرداد و تفکیک مالیات)
+     * * GET/POST /api/flights/update-detailed
+     * Body/Query: {
+     * "service": "nira",
+     * "airline": "NV" (اختیاری)
      * }
      */
     public function updateDetailed(Request $request)
     {
+        // ۱. اعتبارسنجی ورودی‌ها
         $validator = Validator::make($request->all(), [
             'service' => 'required|string',
             'airline' => 'nullable|string'
@@ -40,7 +40,7 @@ class FlightDetailedUpdateController extends Controller
         $service = $request->input('service');
         $airlineCode = $request->input('airline');
 
-        // گرفتن لیست ایرلاین‌ها
+        // ۲. دریافت تنظیمات رابط کاربری (Interface) برای ایرلاین‌های مورد نظر
         $airlines = $airlineCode
             ? [$this->repository->getServiceByCode($service, $airlineCode)]
             : $this->repository->getActiveServices($service);
@@ -50,50 +50,56 @@ class FlightDetailedUpdateController extends Controller
         if (empty($airlines)) {
             return response()->json([
                 'status' => 'error',
-                'message' => 'No active airlines found'
+                'message' => 'هیچ ایرلاین فعالی برای این سرویس یافت نشد.'
             ], 404);
         }
 
-        $results = [];
-
-        // ⏱️ شروع زمان‌سنجی
+        $allResults = [];
         $startTime = microtime(true);
 
+        // ۳. پردازش هر ایرلاین به صورت مجزا
         foreach ($airlines as $config) {
             try {
+                // ایجاد نمونه از پروایدر و سرویس مربوطه
                 $provider = new NiraProvider($config);
                 $detailedService = new FlightDetailedUpdateService(
                     $provider,
-                    $config['code'],
-                    $service
+                    $config['code'], // IATA (e.g., NV)
+                    $service         // e.g., nira
                 );
 
-                $stats = $detailedService->fillMissingData();
+                // فراخوانی متد جدید بازنویسی شده در سرویس
+                $stats = $detailedService->updateFlightsDetails();
 
-                $results[] = [
-                    'airline' => $config['name'],
-                    'iata' => $config['code'],
-                    'status' => 'completed',
-                    'stats' => $stats
+                $allResults[] = [
+                    'airline' => $config['name'] ?? $config['code'],
+                    'iata'    => $config['code'],
+                    'status'  => 'success',
+                    'stats'   => $stats
                 ];
 
             } catch (\Exception $e) {
-                Log::error("Detailed update error for {$config['code']}: " . $e->getMessage());
-                $results[] = [
-                    'airline' => $config['name'],
-                    'iata' => $config['code'],
-                    'status' => 'error',
-                    'message' => $e->getMessage()
+                Log::error("خطا در بروزرسانی جزئیات ایرلاین {$config['code']}: " . $e->getMessage());
+                $allResults[] = [
+                    'iata'    => $config['code'],
+                    'status'  => 'error',
+                    'message' => 'بروز خطا در پردازش: ' . $e->getMessage()
                 ];
             }
         }
 
         $executionTime = round(microtime(true) - $startTime, 2);
 
+        // ۴. بازگرداندن پاسخ نهایی با جزئیات کامل
         return response()->json([
             'status' => 'completed',
             'execution_time_seconds' => $executionTime,
-            'results' => $results
+            'summary' => [
+                'total_airlines_processed' => count($allResults),
+                'total_flights_checked'    => array_sum(array_column(array_column($allResults, 'stats'), 'flights_processed')),
+                'total_classes_updated'    => array_sum(array_column(array_column($allResults, 'stats'), 'classes_updated')),
+            ],
+            'details' => $allResults
         ]);
     }
 }

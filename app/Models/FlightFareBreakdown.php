@@ -28,6 +28,8 @@ class FlightFareBreakdown extends Model
         'tax_v0' => 'decimal:2',
         'tax_hl' => 'decimal:2',
         'tax_lp' => 'decimal:2',
+        'tax_yq' => 'decimal:2',
+
         'total_price' => 'decimal:2',
         'last_updated_at' => 'datetime',
     ];

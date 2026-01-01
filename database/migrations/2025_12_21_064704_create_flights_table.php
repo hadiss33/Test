@@ -18,10 +18,9 @@ return new class extends Migration
             
             $table->string('flight_number', 20);
             $table->dateTime('departure_datetime')->index();
-            $table->string('aircraft_type', 10)->nullable();
             
             $table->tinyInteger('update_priority')->default(3)->index();
-            $table->tinyInteger('missing_count')->default(0);
+            $table->tinyInteger('missing_count')->nullable();
             $table->timestamp('last_updated_at')->nullable();
             
             $table->unique(['airline_active_route_id', 'flight_number', 'departure_datetime'], 'unique_flight');

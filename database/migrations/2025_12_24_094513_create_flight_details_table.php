@@ -17,18 +17,9 @@ return new class extends Migration
             $table->foreignId('flight_id')->constrained('flights')->onDelete('cascade')->unique();
             
             $table->dateTime('arrival_datetime')->nullable();
-            
-            $table->boolean('has_transit')->default(false);
-            $table->string('transit_city', 3)->nullable();
-            
-            $table->string('operating_airline', 10)->nullable();
-            $table->string('operating_flight_no', 20)->nullable();
-            
-            $table->text('refund_rules')->nullable();
-            
-            $table->string('baggage_weight', 20)->nullable(); 
-            $table->string('baggage_pieces', 20)->nullable();
-            
+      
+            $table->string('aircraft_type', 10)->nullable();
+                        
             $table->timestamp('last_updated_at')->nullable();
 
 
