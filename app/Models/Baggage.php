@@ -7,6 +7,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class Baggage extends Model
 {
+    public $timestamps = false;
+
     protected $table = 'baggage';
 
     protected $fillable = [

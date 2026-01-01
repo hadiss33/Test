@@ -2,19 +2,20 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Model;
 use Carbon\Carbon;
+use Illuminate\Database\Eloquent\Model;
 
 class AirlineActiveRoute extends Model
 {
     const UPDATED_AT = 'updated_at';
+
     const CREATED_AT = null;
 
     protected $fillable = [
         'iata',
         'origin',
         'destination',
-        'service',
+        'application_interfaces_id',
         'monday',
         'tuesday',
         'wednesday',
@@ -43,13 +44,14 @@ class AirlineActiveRoute extends Model
     public function hasFlightOnDate(Carbon $date): bool
     {
         $dayName = strtolower($date->englishDayOfWeek);
+
         return $this->{$dayName} === true;
     }
 
-    public function scopeForService($query, string $service)
-    {
-        return $query->where('service', $service);
-    }
+    // public function scopeForService($query, string $service)
+    // {
+    //     return $query->where('service', $service);
+    // }
 
     public function scopeForAirline($query, string $iata)
     {
@@ -58,14 +60,22 @@ class AirlineActiveRoute extends Model
 
     public function scopeActive($query)
     {
-        return $query->where(function($q) {
+        return $query->where(function ($q) {
             $q->where('monday', true)
-              ->orWhere('tuesday', true)
-              ->orWhere('wednesday', true)
-              ->orWhere('thursday', true)
-              ->orWhere('friday', true)
-              ->orWhere('saturday', true)
-              ->orWhere('sunday', true);
+                ->orWhere('tuesday', true)
+                ->orWhere('wednesday', true)
+                ->orWhere('thursday', true)
+                ->orWhere('friday', true)
+                ->orWhere('saturday', true)
+                ->orWhere('sunday', true);
         });
+    }
+
+    public function applicationInterface()
+    {
+        return $this->belongsTo(
+            ApplicationInterface::class,
+            'application_interfaces_id'
+        );
     }
 }

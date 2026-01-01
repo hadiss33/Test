@@ -39,6 +39,7 @@ class FlightFareBreakdown extends Model
         return $this->belongsTo(FlightClass::class);
     }
 
+
     public function getTotalTaxesAttribute(): float
     {
         return $this->tax_i6 + $this->tax_v0 + $this->tax_hl + $this->tax_lp;

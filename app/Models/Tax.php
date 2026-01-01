@@ -7,6 +7,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class Tax extends Model
 {
+    public $timestamps = false;
+
     protected $table = 'taxes';
 
     protected $fillable = [
