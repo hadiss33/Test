@@ -18,6 +18,7 @@ return new class extends Migration
                 ->onDelete('cascade');
             
             $table->text('refund_rules')->nullable();
+            $table->integer('percent');
 
         });
     }

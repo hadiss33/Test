@@ -9,7 +9,6 @@ use Illuminate\Support\Facades\Log;
 class NiraProvider implements FlightProviderInterface
 {
     protected $config;
-
     protected $client;
 
     public function __construct(array $config)
@@ -38,12 +37,10 @@ class NiraProvider implements FlightProviderInterface
             ]);
 
             $data = json_decode($response->getBody()->getContents(), true);
-
             return $data['NRSFlights'] ?? [];
 
         } catch (\Exception $e) {
             Log::error("Nira Schedule Error [{$this->config['code']}]: ".$e->getMessage());
-
             return [];
         }
     }
@@ -68,12 +65,10 @@ class NiraProvider implements FlightProviderInterface
             ]);
 
             $data = json_decode($response->getBody()->getContents(), true);
-
             return $data['AvailableFlights'] ?? [];
 
         } catch (\Exception $e) {
             Log::error("Nira Availability Error [{$this->config['code']}]: ".$e->getMessage());
-
             return [];
         }
     }
@@ -82,17 +77,18 @@ class NiraProvider implements FlightProviderInterface
     {
         $cacheKey = "fare:{$this->config['code']}:{$origin}-{$destination}:{$flightClass}:{$date}:{$flightNo}";
 
-        return Cache::remember($cacheKey, 300, function () use ($origin, $destination, $flightClass, $date) {
+        return Cache::remember($cacheKey, 300, function () use ($origin, $destination, $flightClass, $date, $flightNo) {
             $url = $this->config['base_url_ws1'].'/FareJS.jsp';
 
             try {
+                // FIX: Use actual parameters instead of hardcoded test values
                 $response = $this->client->get($url, [
                     'query' => [
-                        'AirLine' => '*',
-                        'Route' => 'IFN-AWZ',
-                        'RBD' => 'M',
+                        'AirLine' => $this->config['code'],
+                        'Route' => "{$origin}-{$destination}",
+                        'RBD' => $flightClass,
                         'DepartureDate' => $date,
-                        'FlightNO' => '2622',
+                        'FlightNO' => $flightNo,
                         'OfficeUser' => $this->config['office_user'],
                         'OfficePass' => $this->config['office_pass'],
                     ],
@@ -103,11 +99,20 @@ class NiraProvider implements FlightProviderInterface
                 $rawData = json_decode($utf8Body, true);
 
                 if (isset($rawData['Error']) || empty($rawData)) {
+                    Log::warning("Fare API returned error or empty", [
+                        'airline' => $this->config['code'],
+                        'route' => "{$origin}-{$destination}",
+                        'class' => $flightClass,
+                        'date' => $date,
+                        'flight_no' => $flightNo,
+                        'error' => $rawData['Error'] ?? 'Empty response'
+                    ]);
                     return null;
                 }
 
+                // Parse refund rules
                 $crcnRules = [];
-                if (! empty($rawData['CRCNRules'])) {
+                if (!empty($rawData['CRCNRules'])) {
                     foreach (explode('/', trim($rawData['CRCNRules'], '/')) as $rule) {
                         $parts = explode(',', $rule);
                         $crcnRules[] = [
@@ -117,6 +122,7 @@ class NiraProvider implements FlightProviderInterface
                     }
                 }
 
+                // Parse taxes
                 $formatTaxes = function ($taxString) {
                     if (empty($taxString)) {
                         return [];
@@ -134,22 +140,23 @@ class NiraProvider implements FlightProviderInterface
                                 $taxItem["Tax-{$key}"] = $val;
                             }
                         }
-                        $result[] = $taxItem;
+                        if (!empty($taxItem)) {
+                            $result[] = $taxItem;
+                        }
                     }
-
                     return $result;
                 };
 
                 $data = [
-                    'AdultTotalPrice' => $rawData['AdultTotalPrice'],
-                    'InfantTotalPrice' => $rawData['InfantTotalPrice'],
-                    'ChildTotalPrice' => $rawData['ChildTotalPrice'],
-                    'AdultFare' => $rawData['AdultFare'],
-                    'ChildFare' => $rawData['ChildFare'],
-                    'InfantFare' => $rawData['InfantFare'],
-                    'BaggageAllowanceWeight' => $rawData['BaggageAllowanceWeight'],
-                    'BaggageAllowancePieces' => $rawData['BaggageAllowancePieces'],
-                    'EligibilityText' => $rawData['EligibilityText'],
+                    'AdultTotalPrice' => $rawData['AdultTotalPrice'] ?? null,
+                    'InfantTotalPrice' => $rawData['InfantTotalPrice'] ?? null,
+                    'ChildTotalPrice' => $rawData['ChildTotalPrice'] ?? null,
+                    'AdultFare' => $rawData['AdultFare'] ?? null,
+                    'ChildFare' => $rawData['ChildFare'] ?? null,
+                    'InfantFare' => $rawData['InfantFare'] ?? null,
+                    'BaggageAllowanceWeight' => $rawData['BaggageAllowanceWeight'] ?? null,
+                    'BaggageAllowancePieces' => $rawData['BaggageAllowancePieces'] ?? null,
+                    'EligibilityText' => $rawData['EligibilityText'] ?? null,
                     'CRCNRules' => $crcnRules,
                     'Taxes' => [
                         'Adult' => $formatTaxes($rawData['AdultTaxes'] ?? ''),
@@ -158,10 +165,6 @@ class NiraProvider implements FlightProviderInterface
                     ],
                 ];
 
-                if (isset($data['Error']) || empty($data)) {
-                    return null;
-                }
-
                 return $data;
 
             } catch (\Exception $e) {
@@ -169,8 +172,9 @@ class NiraProvider implements FlightProviderInterface
                     'route' => "{$origin}-{$destination}",
                     'class' => $flightClass,
                     'date' => $date,
+                    'flight_no' => $flightNo,
+                    'trace' => $e->getTraceAsString()
                 ]);
-
                 return null;
             }
         });
@@ -219,7 +223,6 @@ class NiraProvider implements FlightProviderInterface
 
         return 'closed';
     }
-
 
     public function getConfig(?string $key = null)
     {

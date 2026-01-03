@@ -14,6 +14,7 @@ class Rule extends Model
     protected $fillable = [
         'flight_class_id',
         'refund_rules',
+        'percent'
     ];
 
     /**

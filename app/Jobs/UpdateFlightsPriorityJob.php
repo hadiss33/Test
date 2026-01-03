@@ -6,13 +6,15 @@ use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\{InteractsWithQueue, SerializesModels};
-use App\Services\FlightCleanupService;
 use Illuminate\Support\Facades\Log;
-
 
 class UpdateFlightsPriorityJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+
+    public $timeout = 600; // 10 minutes
+    public $tries = 2;
+    public $maxExceptions = 1;
 
     protected $priority;
     protected $service;
@@ -37,6 +39,8 @@ class UpdateFlightsPriorityJob implements ShouldQueue
 
         foreach ($airlines as $config) {
             try {
+                Log::info("Starting priority {$this->priority} update for {$config['code']}");
+                
                 $provider = new \App\Services\FlightProviders\NiraProvider($config);
                 $updateService = new \App\Services\FlightUpdateService($provider, $config['code'], $this->service);
                 
@@ -45,8 +49,21 @@ class UpdateFlightsPriorityJob implements ShouldQueue
                 Log::info("Priority {$this->priority} update completed for {$config['code']}", $stats);
                 
             } catch (\Exception $e) {
-                Log::error("Priority update failed for {$config['code']}: " . $e->getMessage());
+                Log::error("Priority update failed for {$config['code']}: " . $e->getMessage(), [
+                    'priority' => $this->priority,
+                    'trace' => $e->getTraceAsString()
+                ]);
             }
         }
+    }
+
+    public function failed(\Throwable $exception): void
+    {
+        Log::error("UpdateFlightsPriorityJob failed", [
+            'priority' => $this->priority,
+            'service' => $this->service,
+            'airline' => $this->airlineCode,
+            'error' => $exception->getMessage()
+        ]);
     }
 }
