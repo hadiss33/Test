@@ -14,4 +14,7 @@ interface FlightProviderInterface
     public function parseAvailableSeats(string $cap, string $flightClass): int;
 
     public function determineStatus(string $capacity): string;
+    
+    public function getConfig(?string $key = null);
+
 }

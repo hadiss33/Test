@@ -29,7 +29,6 @@ class Tax extends Model
         return $this->belongsTo(FlightClass::class);
     }
 
-
     public function scopeAdult($query)
     {
         return $query->where('passenger_type', 'adult');

@@ -19,6 +19,7 @@ class RouteSyncService
         $this->provider = $provider;
         $this->iata = $iata;
         $this->service = $service;
+
     }
 
     public function sync(): array
@@ -45,6 +46,7 @@ class RouteSyncService
 
     protected function analyzeRoutes(array $flights): array
     {
+        $fullConfig = $this->provider->getConfig();
         $routes = [];
 
         foreach ($flights as $flight) {
@@ -59,8 +61,9 @@ class RouteSyncService
                 $routes[$key] = [
                     'origin' => $origin,
                     'destination' => $destination,
-                    'monday' => false, 'tuesday' => false, 'wednesday' => false,
-                    'thursday' => false, 'friday' => false, 'saturday' => false, 'sunday' => false,
+                    'application_interfaces_id' => $fullConfig['id'] ?? null,    
+                    'monday' => null, 'tuesday' => null, 'wednesday' => null,
+                    'thursday' => null, 'friday' => null, 'saturday' => null, 'sunday' => null,
                 ];
             }
 
@@ -72,8 +75,10 @@ class RouteSyncService
 
     protected function cleanupOldRoutes(array $activeRouteKeys): void
     {
+        $fullConfig = $this->provider->getConfig();
+
         $existingRoutes = \App\Models\AirlineActiveRoute::where('iata', $this->iata)
-            ->where('service', $this->service)
+            ->where('application_interfaces_id', $fullConfig['id'] ?? null)
             ->get();
         
         foreach ($existingRoutes as $route) {
@@ -88,13 +93,14 @@ class RouteSyncService
 
     protected function saveRoutes(array $routes): void
     {
+
         foreach ($routes as $routeData) {
             \App\Models\AirlineActiveRoute::updateOrCreate(
                 [
                     'iata' => $this->iata,
                     'origin' => $routeData['origin'],
                     'destination' => $routeData['destination'],
-                    'service' => $this->service,
+                    'application_interfaces_id' => $routeData['application_interfaces_id'],
                 ],
                 [
                     'monday' => $routeData['monday'],

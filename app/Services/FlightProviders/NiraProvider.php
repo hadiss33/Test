@@ -131,7 +131,7 @@ class NiraProvider implements FlightProviderInterface
                                 $taxItem['title_fa'] = substr($part, 8);
                             } elseif (str_contains($part, ':')) {
                                 [$key, $val] = explode(':', $part);
-                                $taxItem["{$key}"] = $val;
+                                $taxItem["Tax-{$key}"] = $val;
                             }
                         }
                         $result[] = $taxItem;
@@ -218,5 +218,14 @@ class NiraProvider implements FlightProviderInterface
         }
 
         return 'closed';
+    }
+
+
+    public function getConfig(?string $key = null)
+    {
+        if ($key) {
+            return $this->config[$key] ?? null;
+        }
+        return $this->config;
     }
 }

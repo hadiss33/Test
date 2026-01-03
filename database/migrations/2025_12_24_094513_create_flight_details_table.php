@@ -18,7 +18,9 @@ return new class extends Migration
             
             $table->dateTime('arrival_datetime')->nullable();
       
-            $table->string('aircraft_type', 10)->nullable();
+            $table->string('aircraft_code', 10)->nullable();
+
+            $table->string('aircraft_type_code', 10)->nullable();
                         
             $table->timestamp('last_updated_at')->nullable();
 

@@ -15,11 +15,8 @@ return new class extends Migration
             $table->id();
             
             $table->foreignId('airline_active_route_id')->constrained('airline_active_routes')->onDelete('cascade');
-            
             $table->string('flight_number', 20);
-            $table->dateTime('departure_datetime')->index();
-            
-            $table->tinyInteger('update_priority')->default(3)->index();
+            $table->dateTime('departure_datetime')->index();            
             $table->tinyInteger('missing_count')->nullable();
             $table->timestamp('last_updated_at')->nullable();
             

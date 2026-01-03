@@ -11,7 +11,6 @@ class FlightClass extends Model
     protected $fillable = [
         'flight_id',
         'class_code',
-        'class_status',
         'price_adult',
         'price_child',
         'price_infant',
@@ -35,6 +34,16 @@ class FlightClass extends Model
     public function fareBreakdown()
     {
         return $this->hasMany(FlightFareBreakdown::class);
+    }
+
+    public function taxes()
+    {
+        return $this->hasMany(Tax::class);
+    }
+
+    public function fareBaggage()
+    {
+        return $this->hasMany(Baggage::class);
     }
 
     public function scopeActive($query)

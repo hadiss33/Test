@@ -13,8 +13,6 @@ class Flight extends Model
         'airline_active_route_id',
         'flight_number',
         'departure_datetime',
-        'aircraft_type',
-        'update_priority',
         'missing_count',
         'last_updated_at',
     ];
@@ -22,18 +20,15 @@ class Flight extends Model
     protected $casts = [
         'departure_datetime' => 'datetime',
         'last_updated_at' => 'datetime',
-        'missing_count' => 'integer',
     ];
 
     public function route()
     {
         return $this->belongsTo(AirlineActiveRoute::class, 'airline_active_route_id');
     }
-    // app/Models/Flight.php
 
-    public function activeRoute() // نام متد باید دقیقاً همین باشد
+    public function activeRoute() 
     {
-        // ارتباط با جدول airline_active_routes از طریق فیلد airline_active_route_id
         return $this->belongsTo(AirlineActiveRoute::class, 'airline_active_route_id');
     }
 
@@ -92,7 +87,8 @@ class Flight extends Model
 
     public function scopeByPriority($query, int $priority)
     {
-        return $query->where('update_priority', $priority);
+        $priorityCurrent = $this->calculatePriority(); 
+        return $query->where($priorityCurrent , $priority);
     }
 
     public function scopeOnDate($query, Carbon $date)

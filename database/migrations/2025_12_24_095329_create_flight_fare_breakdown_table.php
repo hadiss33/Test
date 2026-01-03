@@ -17,11 +17,6 @@ return new class extends Migration
             $table->foreignId('flight_class_id')
                 ->constrained('flight_classes')
                 ->onDelete('cascade');
-            
-                
-            $table->decimal('base_fare', 12, 2)->default(0);
-            
-
 
             $table->decimal('total_adult', 12, 2)->default(0);
             $table->decimal('total_child', 12, 2)->default(0);

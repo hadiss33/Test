@@ -11,18 +11,14 @@ class FlightDetail extends Model
     protected $fillable = [
         'flight_id',
         'arrival_datetime',
-        'has_transit',
-        'transit_city',
-        'operating_airline',
-        'operating_flight_no',
-        'refund_rules',
-        'baggage_weight',
-        'baggage_pieces',
+        'aircraft_code',
+        'aircraft_type_code',
+        'last_updated_at'
+
     ];
 
     protected $casts = [
         'arrival_datetime' => 'datetime',
-        'has_transit' => 'boolean',
     ];
 
     public function flight()
