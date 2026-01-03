@@ -18,9 +18,7 @@ use Illuminate\Support\Facades\Log;
 class FlightUpdateService
 {
     protected $provider;
-
     protected $iata;
-
     protected $appInterfaceId;
 
     public function __construct(FlightProviderInterface $provider, string $iata, string $service = 'nira')
@@ -33,17 +31,31 @@ class FlightUpdateService
     public function updateByPriority(int $priority): array
     {
         $fullConfig = $this->provider->getConfig();
-        $stats = ['checked' => 0, 'updated' => 0, 'skipped' => 0, 'errors' => 0];
+        $stats = [
+            'checked' => 0,
+            'updated' => 0,
+            'skipped' => 0,
+            'errors' => 0,
+            'routes_processed' => 0,
+            'flights_found' => 0
+        ];
 
         $routes = AirlineActiveRoute::where('iata', $this->iata)
             ->where('application_interfaces_id', $fullConfig['id'] ?? null)
             ->get();
 
+        if ($routes->isEmpty()) {
+            Log::warning("No routes found for airline {$this->iata}");
+            return $stats;
+        }
+
         $dates = $this->getDatesForPriority($priority);
 
         foreach ($routes as $route) {
+            $stats['routes_processed']++;
+            
             foreach ($dates as $date) {
-                if (! $route->hasFlightOnDate($date)) {
+                if (!$route->hasFlightOnDate($date)) {
                     continue;
                 }
 
@@ -54,34 +66,44 @@ class FlightUpdateService
                         $date->format('Y-m-d')
                     );
 
-                    // Process in smaller batches
-                    foreach (array_chunk($flights, 5) as $flightBatch) {
-                        foreach ($flightBatch as $flightData) {
-                            DB::beginTransaction();
-                            try {
-                                $updateResult = $this->saveFlightWithClasses($route, $flightData, $priority, $date);
+                    if (empty($flights)) {
+                        continue;
+                    }
 
-                                $stats['checked']++;
-                                $stats[$updateResult]++;
-                                DB::commit();
+                    $stats['flights_found'] += count($flights);
 
-                                // Small delay to prevent rate limiting
-                                usleep(100000); // 0.1 second
+                    foreach ($flights as $flightData) {
+                        DB::beginTransaction();
+                        try {
+                            $updateResult = $this->saveFlightWithClasses($route, $flightData, $priority, $date);
 
-                            } catch (\Exception $e) {
-                                DB::rollBack();
-                                $stats['errors']++;
-                                Log::error('Save Flight Error: '.$e->getMessage(), [
-                                    'flight_no' => $flightData['FlightNo'] ?? 'unknown',
-                                    'route' => "{$route->origin}-{$route->destination}",
-                                    'error_line' => $e->getLine(),
-                                ]);
-                            }
+                            $stats['checked']++;
+                            $stats[$updateResult]++;
+                            
+                            DB::commit();
+
+                        } catch (\Exception $e) {
+                            DB::rollBack();
+                            $stats['errors']++;
+                            
+                            Log::error('Save Flight Error', [
+                                'flight_no' => $flightData['FlightNo'] ?? 'unknown',
+                                'route' => "{$route->origin}-{$route->destination}",
+                                'date' => $date->format('Y-m-d'),
+                                'error' => $e->getMessage(),
+                                'line' => $e->getLine(),
+                                'file' => basename($e->getFile()),
+                            ]);
                         }
                     }
+
                 } catch (\Exception $e) {
                     $stats['errors']++;
-                    Log::error("Fetch Availability Error [{$route->origin}-{$route->destination}]: ".$e->getMessage());
+                    Log::error("Fetch Availability Error", [
+                        'route' => "{$route->origin}-{$route->destination}",
+                        'date' => $date->format('Y-m-d'),
+                        'error' => $e->getMessage()
+                    ]);
                 }
             }
         }
@@ -93,6 +115,7 @@ class FlightUpdateService
     {
         $departureDateTime = Carbon::parse($data['DepartureDateTime']);
 
+        // Save/Update Flight
         $flight = Flight::updateOrCreate(
             [
                 'airline_active_route_id' => $route->id,
@@ -101,27 +124,34 @@ class FlightUpdateService
             ],
             [
                 'last_updated_at' => now(),
-                'missing_count' => null,
+                'missing_count' => 0,
             ]
         );
 
         $isNew = $flight->wasRecentlyCreated;
 
+        // Save/Update Flight Details
         FlightDetail::updateOrCreate(
             ['flight_id' => $flight->id],
             [
-                'arrival_datetime' => isset($data['ArrivalDateTime']) ? Carbon::parse($data['ArrivalDateTime']) : null,
+                'arrival_datetime' => isset($data['ArrivalDateTime']) 
+                    ? Carbon::parse($data['ArrivalDateTime']) 
+                    : null,
                 'aircraft_code' => $data['AircraftCode'] ?? null,
                 'aircraft_type_code' => $data['AircraftTypeCode'] ?? null,
                 'last_updated_at' => now(),
             ]
         );
 
+        // Process all classes
         $hasChanges = false;
-        foreach ($data['ClassesStatus'] as $classData) {
-            $changed = $this->saveFlightClass($flight, $route, $classData, $date);
-            if ($changed) {
-                $hasChanges = true;
+        
+        if (isset($data['ClassesStatus']) && is_array($data['ClassesStatus'])) {
+            foreach ($data['ClassesStatus'] as $classData) {
+                $changed = $this->saveFlightClass($flight, $route, $classData, $date);
+                if ($changed) {
+                    $hasChanges = true;
+                }
             }
         }
 
@@ -133,6 +163,7 @@ class FlightUpdateService
         $classCode = $classData['FlightClass'];
         $cap = $classData['Cap'];
 
+        // Fetch detailed fare data
         $fareData = $this->provider->getFare(
             $route->origin,
             $route->destination,
@@ -141,9 +172,10 @@ class FlightUpdateService
             (string) $flight->flight_number
         );
 
-        $hasFareData = ! is_null($fareData) && ! empty($fareData);
+        $hasFareData = !is_null($fareData) && !empty($fareData);
 
-        $newData = [
+        // Prepare class data
+        $classUpdateData = [
             'price_adult' => (float) ($classData['Price'] ?? 0),
             'price_child' => $hasFareData ? ($fareData['ChildTotalPrice'] ?? null) : null,
             'price_infant' => $hasFareData ? ($fareData['InfantTotalPrice'] ?? null) : null,
@@ -152,15 +184,20 @@ class FlightUpdateService
             'last_updated_at' => now(),
         ];
 
+        // Save/Update Flight Class
         $flightClass = FlightClass::updateOrCreate(
-            ['flight_id' => $flight->id, 'class_code' => $classCode],
-            $newData
+            [
+                'flight_id' => $flight->id,
+                'class_code' => $classCode
+            ],
+            $classUpdateData
         );
 
+        // Save related data only if fare data exists
         if ($hasFareData) {
             $this->saveFareBreakdown($flightClass, $fareData);
             $this->saveDetailedTaxes($flightClass, $fareData['Taxes'] ?? []);
-            $this->saveBaggage($flightClass, $fareData[''] ?? []);
+            $this->saveBaggage($flightClass, $fareData);
             $this->saveRules($flightClass, $fareData);
         }
 
@@ -182,13 +219,22 @@ class FlightUpdateService
 
     protected function saveDetailedTaxes(FlightClass $flightClass, array $taxesData): void
     {
+        if (empty($taxesData) || !is_array($taxesData)) {
+            return;
+        }
+
         foreach ($taxesData as $passengerType => $taxItems) {
             $normalizedPassengerType = strtolower($passengerType);
+
+            if (!is_array($taxItems)) {
+                continue;
+            }
 
             foreach ($taxItems as $taxItem) {
                 $taxCode = null;
                 $taxAmount = null;
 
+                // Extract tax code and amount
                 foreach ($taxItem as $key => $value) {
                     if (str_starts_with($key, 'Tax-')) {
                         $taxCode = str_replace('Tax-', '', $key);
@@ -197,7 +243,7 @@ class FlightUpdateService
                     }
                 }
 
-                if (! $taxCode) {
+                if (!$taxCode) {
                     continue;
                 }
 
@@ -230,28 +276,39 @@ class FlightUpdateService
 
     protected function saveRules(FlightClass $flightClass, array $fareData): void
     {
-        if (empty($fareData['CRCNRules']) || ! is_array($fareData['CRCNRules'])) {
+        // Validate CRCNRules exists and is array
+        if (empty($fareData['CRCNRules']) || !is_array($fareData['CRCNRules'])) {
             return;
         }
 
-        foreach ($fareData['CRCNRules'] as $rule) {
+        // Delete old rules for this flight class
+        Rule::where('flight_class_id', $flightClass->id)->delete();
 
-            Rule::updateOrCreate(
-                [
-                    'flight_class_id' => $flightClass->id,
-                    'percent' => $rule['percent'],
-                ],
-                [
-                    'refund_rules' => $rule['text'] ?? null,
-                ]
-            );
+        // Insert new rules
+        foreach ($fareData['CRCNRules'] as $rule) {
+            if (!is_array($rule)) {
+                continue;
+            }
+
+            Rule::create([
+                'flight_class_id' => $flightClass->id,
+                'refund_rules' => $rule['text'] ?? null,
+                'percent' => isset($rule['percent']) ? (int) $rule['percent'] : null,
+            ]);
         }
     }
 
     protected function getDatesForPriority(int $priority): array
     {
-        $ranges = [1 => [0, 3], 2 => [4, 7], 3 => [8, 30], 4 => [31, 120]];
+        $ranges = [
+            1 => [0, 3],
+            2 => [4, 7],
+            3 => [8, 30],
+            4 => [31, 120]
+        ];
+        
         [$start, $end] = $ranges[$priority] ?? [0, 3];
+        
         $dates = [];
         for ($i = $start; $i <= $end; $i++) {
             $dates[] = now()->addDays($i);

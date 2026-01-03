@@ -6,9 +6,6 @@ use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
-    /**
-     * Run the migrations.
-     */
     public function up(): void
     {
         Schema::create('rules', function (Blueprint $table) {
@@ -18,14 +15,12 @@ return new class extends Migration
                 ->onDelete('cascade');
             
             $table->text('refund_rules')->nullable();
-            $table->integer('percent');
-
+            $table->integer('percent')->nullable();
+            
+            $table->unique(['flight_class_id', 'percent'], 'unique_class_percent');
         });
     }
 
-    /**
-     * Reverse the migrations.
-     */
     public function down(): void
     {
         Schema::dropIfExists('rules');

@@ -14,10 +14,11 @@ Route::prefix('routes')->group(function() {
 
 Route::prefix('flights')->group(function() {
     Route::post('/update', [FlightUpdateController::class, 'update']);
-    
-    Route::post('/update-sync', [FlightUpdateController::class, 'updateSync']);
-    
+
     Route::post('/cleanup', [FlightUpdateController::class, 'cleanup']);
+    
+    Route::post('/check-missing', [FlightUpdateController::class, 'checkMissing']);
+    
     
     Route::post('/check-missing', [FlightUpdateController::class, 'checkMissing']);
     

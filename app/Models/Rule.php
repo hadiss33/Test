@@ -14,7 +14,11 @@ class Rule extends Model
     protected $fillable = [
         'flight_class_id',
         'refund_rules',
-        'percent'
+        'percent',
+    ];
+
+    protected $casts = [
+        'percent' => 'integer',
     ];
 
     /**
@@ -23,5 +27,13 @@ class Rule extends Model
     public function flightClass(): BelongsTo
     {
         return $this->belongsTo(FlightClass::class);
+    }
+
+    /**
+     * Scopes
+     */
+    public function scopeOrderByPercent($query)
+    {
+        return $query->orderBy('percent', 'asc');
     }
 }
