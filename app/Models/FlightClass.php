@@ -6,24 +6,27 @@ use Illuminate\Database\Eloquent\Model;
 
 class FlightClass extends Model
 {
-    public $timestamps = false;
+
+    const UPDATED_AT = 'updated_at';
+
+    const CREATED_AT = null;
 
     protected $fillable = [
         'flight_id',
         'class_code',
-        'price_adult',
-        'price_child',
-        'price_infant',
+        'payable_adult',
+        'payable_child',
+        'payable_infant',
         'available_seats',
         'status',
-        'last_updated_at',
+        'updated_at',
     ];
 
     protected $casts = [
-        'price_adult' => 'decimal:2',
-        'price_child' => 'decimal:2',
-        'price_infant' => 'decimal:2',
-        'last_updated_at' => 'datetime',
+        'payable_adult' => 'decimal:2',
+        'payable_child' => 'decimal:2',
+        'payable_infant' => 'decimal:2',
+        'updated_at' => 'datetime',
     ];
 
     public function flight()
@@ -38,12 +41,12 @@ class FlightClass extends Model
 
     public function taxes()
     {
-        return $this->hasMany(Tax::class);
+        return $this->hasMany(FlightTax::class);
     }
 
     public function fareBaggage()
     {
-        return $this->hasMany(Baggage::class);
+        return $this->hasMany(FlightBaggage::class);
     }
 
     public function scopeActive($query)

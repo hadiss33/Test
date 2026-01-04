@@ -8,21 +8,21 @@ return new class extends Migration
 {
     public function up(): void
     {
-        Schema::create('rules', function (Blueprint $table) {
+        Schema::create('flight_rules', function (Blueprint $table) {
             $table->id();
             $table->foreignId('flight_class_id')
                 ->constrained('flight_classes')
                 ->onDelete('cascade');
             
-            $table->text('refund_rules')->nullable();
-            $table->integer('percent')->nullable();
+            $table->text('rules')->nullable();
+            $table->integer('penalty_percentage')->nullable();
             
-            $table->unique(['flight_class_id', 'percent'], 'unique_class_percent');
+            $table->unique(['flight_class_id', 'penalty_percentage'], 'unique_class_percent');
         });
     }
 
     public function down(): void
     {
-        Schema::dropIfExists('rules');
+        Schema::dropIfExists('flight_rules');
     }
 };

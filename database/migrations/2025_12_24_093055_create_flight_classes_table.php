@@ -18,14 +18,14 @@ return new class extends Migration
             
             $table->string('class_code', 10); 
             
-            $table->decimal('price_adult', 12, 2)->nullable();
-            $table->decimal('price_child', 12, 2)->nullable();
-            $table->decimal('price_infant', 12, 2)->nullable();
+            $table->decimal('payable_adult', 12, 2)->nullable();
+            $table->decimal('payable_child', 12, 2)->nullable();
+            $table->decimal('payable_infant', 12, 2)->nullable();
             
             $table->integer('available_seats')->nullable();
             $table->enum('status', ['active', 'full', 'closed', 'cancelled'])->default('active');
             
-            $table->timestamp('last_updated_at')->nullable();
+            $table->timestamp('updated_at')->nullable();
             
             $table->unique(['flight_id', 'class_code'], 'unique_flight_class');
             $table->index(['status', 'available_seats']);

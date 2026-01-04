@@ -7,19 +7,23 @@ use Illuminate\Database\Eloquent\Model;
 
 class Flight extends Model
 {
-    public $timestamps = false;
+    
+    
+    const UPDATED_AT = 'updated_at';
+
+    const CREATED_AT = null;
 
     protected $fillable = [
         'airline_active_route_id',
         'flight_number',
         'departure_datetime',
         'missing_count',
-        'last_updated_at',
+        'updated_at',
     ];
 
     protected $casts = [
         'departure_datetime' => 'datetime',
-        'last_updated_at' => 'datetime',
+        'updated_at' => 'datetime',
     ];
 
     public function route()

@@ -5,20 +5,20 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-class Rule extends Model
+class FlightRule extends Model
 {
     public $timestamps = false;
 
-    protected $table = 'rules';
+    protected $table = 'flight_rules';
 
     protected $fillable = [
         'flight_class_id',
-        'refund_rules',
-        'percent',
+        'rules',
+        'penalty_percentage',
     ];
 
     protected $casts = [
-        'percent' => 'integer',
+        'penalty_percentage' => 'integer',
     ];
 
     /**
@@ -34,6 +34,6 @@ class Rule extends Model
      */
     public function scopeOrderByPercent($query)
     {
-        return $query->orderBy('percent', 'asc');
+        return $query->orderBy('penalty_percentage', 'asc');
     }
 }

@@ -11,15 +11,19 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('baggage', function (Blueprint $table) {
+        Schema::create('flight_baggage', function (Blueprint $table) {
             $table->id();
             $table->foreignId('flight_class_id')
                 ->constrained('flight_classes')
                 ->onDelete('cascade');
             
 
-            $table->string('baggage_weight', 20)->nullable(); 
-            $table->string('baggage_pieces', 20)->nullable();
+            $table->integer('adult_weight')->nullable(); 
+            $table->integer('adult_pieces')->nullable();
+            $table->integer('infant_weight')->nullable(); 
+            $table->integer('infant_pieces')->nullable();
+            $table->integer('child_weight')->nullable(); 
+            $table->integer('child_pieces')->nullable();
         });
     }
 
@@ -28,6 +32,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::dropIfExists('baggage');
+        Schema::dropIfExists('flight_baggage');
     }
 };

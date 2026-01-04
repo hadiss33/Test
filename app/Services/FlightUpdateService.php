@@ -3,13 +3,13 @@
 namespace App\Services;
 
 use App\Models\AirlineActiveRoute;
-use App\Models\Baggage;
+use App\Models\FlightBaggage;
 use App\Models\Flight;
 use App\Models\FlightClass;
 use App\Models\FlightDetail;
 use App\Models\FlightFareBreakdown;
-use App\Models\Rule;
-use App\Models\Tax;
+use App\Models\FlightRule;
+use App\Models\FlightTax;
 use App\Services\FlightProviders\FlightProviderInterface;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -115,7 +115,6 @@ class FlightUpdateService
     {
         $departureDateTime = Carbon::parse($data['DepartureDateTime']);
 
-        // Save/Update Flight
         $flight = Flight::updateOrCreate(
             [
                 'airline_active_route_id' => $route->id,
@@ -123,14 +122,13 @@ class FlightUpdateService
                 'departure_datetime' => $departureDateTime,
             ],
             [
-                'last_updated_at' => now(),
-                'missing_count' => 0,
+                'updated_at' => now(),
+                'missing_count' => null,
             ]
         );
 
         $isNew = $flight->wasRecentlyCreated;
 
-        // Save/Update Flight Details
         FlightDetail::updateOrCreate(
             ['flight_id' => $flight->id],
             [
@@ -139,11 +137,10 @@ class FlightUpdateService
                     : null,
                 'aircraft_code' => $data['AircraftCode'] ?? null,
                 'aircraft_type_code' => $data['AircraftTypeCode'] ?? null,
-                'last_updated_at' => now(),
+                'updated_at' => now(),
             ]
         );
 
-        // Process all classes
         $hasChanges = false;
         
         if (isset($data['ClassesStatus']) && is_array($data['ClassesStatus'])) {
@@ -163,28 +160,17 @@ class FlightUpdateService
         $classCode = $classData['FlightClass'];
         $cap = $classData['Cap'];
 
-        // Fetch detailed fare data
-        $fareData = $this->provider->getFare(
-            $route->origin,
-            $route->destination,
-            $classCode,
-            $date->format('Y-m-d'),
-            (string) $flight->flight_number
-        );
 
-        $hasFareData = !is_null($fareData) && !empty($fareData);
 
-        // Prepare class data
         $classUpdateData = [
-            'price_adult' => (float) ($classData['Price'] ?? 0),
-            'price_child' => $hasFareData ? ($fareData['ChildTotalPrice'] ?? null) : null,
-            'price_infant' => $hasFareData ? ($fareData['InfantTotalPrice'] ?? null) : null,
+            'payable_adult' => (float) ($classData['Price'] ?? 0),
+            'payable_child' => null,
+            'payable_infant' => null,
             'available_seats' => $this->provider->parseAvailableSeats($cap, $classCode),
             'status' => $this->provider->determineStatus($cap),
             'last_updated_at' => now(),
         ];
 
-        // Save/Update Flight Class
         $flightClass = FlightClass::updateOrCreate(
             [
                 'flight_id' => $flight->id,
@@ -193,15 +179,31 @@ class FlightUpdateService
             $classUpdateData
         );
 
-        // Save related data only if fare data exists
-        if ($hasFareData) {
-            $this->saveFareBreakdown($flightClass, $fareData);
-            $this->saveDetailedTaxes($flightClass, $fareData['Taxes'] ?? []);
-            $this->saveBaggage($flightClass, $fareData);
-            $this->saveRules($flightClass, $fareData);
-        }
+
 
         return $flightClass->wasRecentlyCreated || $flightClass->wasChanged();
+    }
+
+
+
+    public function getFare(){
+
+        // $fareData = $this->provider->getFare(
+        //     $route->origin,
+        //     $route->destination,
+        //     $classCode,
+        //     $date->format('Y-m-d'),
+        //     (string) $flight->flight_number
+        // );
+
+
+
+        // if ($hasFareData) {
+        //     $this->saveFareBreakdown($flightClass, $fareData);
+        //     $this->saveDetailedTaxes($flightClass, $fareData['Taxes'] ?? []);
+        //     $this->saveBaggage($flightClass, $fareData);
+        //     $this->saveRules($flightClass, $fareData);
+        // }
     }
 
     protected function saveFareBreakdown(FlightClass $flightClass, array $fareData): void
@@ -234,7 +236,6 @@ class FlightUpdateService
                 $taxCode = null;
                 $taxAmount = null;
 
-                // Extract tax code and amount
                 foreach ($taxItem as $key => $value) {
                     if (str_starts_with($key, 'Tax-')) {
                         $taxCode = str_replace('Tax-', '', $key);
@@ -247,7 +248,7 @@ class FlightUpdateService
                     continue;
                 }
 
-                Tax::updateOrCreate(
+                FlightTax::updateOrCreate(
                     [
                         'flight_class_id' => $flightClass->id,
                         'passenger_type' => $normalizedPassengerType,
@@ -265,32 +266,29 @@ class FlightUpdateService
 
     protected function saveBaggage(FlightClass $flightClass, array $fareData): void
     {
-        Baggage::updateOrCreate(
+        FlightBaggage::updateOrCreate(
             ['flight_class_id' => $flightClass->id],
             [
-                'baggage_weight' => $fareData['BaggageAllowanceWeight'] ?? null,
-                'baggage_pieces' => $fareData['BaggageAllowancePieces'] ?? null,
+                'adult_weight' => $fareData['BaggageAllowanceWeight'] ?? null,
+                'adult_pieces' => $fareData['BaggageAllowancePieces'] ?? null,
             ]
         );
     }
 
     protected function saveRules(FlightClass $flightClass, array $fareData): void
     {
-        // Validate CRCNRules exists and is array
         if (empty($fareData['CRCNRules']) || !is_array($fareData['CRCNRules'])) {
             return;
         }
 
-        // Delete old rules for this flight class
-        Rule::where('flight_class_id', $flightClass->id)->delete();
+        FlightRule::where('flight_class_id', $flightClass->id)->delete();
 
-        // Insert new rules
         foreach ($fareData['CRCNRules'] as $rule) {
             if (!is_array($rule)) {
                 continue;
             }
 
-            Rule::create([
+            FlightRule::create([
                 'flight_class_id' => $flightClass->id,
                 'refund_rules' => $rule['text'] ?? null,
                 'percent' => isset($rule['percent']) ? (int) $rule['percent'] : null,

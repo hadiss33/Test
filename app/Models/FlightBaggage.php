@@ -5,16 +5,20 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-class Baggage extends Model
+class FlightBaggage extends Model
 {
     public $timestamps = false;
 
-    protected $table = 'baggage';
+    protected $table = 'flight_baggage';
 
     protected $fillable = [
         'flight_class_id',
-        'baggage_weight',
-        'baggage_pieces',
+        'adult_weight',
+        'adult_pieces',
+        'infant_weight',
+        'infant_pieces',
+        'child_weight',
+        'child_pieces',
     ];
 
     /**

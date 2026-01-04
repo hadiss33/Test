@@ -18,11 +18,11 @@ return new class extends Migration
                 ->constrained('flight_classes')
                 ->onDelete('cascade');
 
-            $table->decimal('total_adult', 12, 2)->default(0);
-            $table->decimal('total_child', 12, 2)->default(0);
-            $table->decimal('total_infant', 12, 2)->default(0);
+            $table->decimal('base_adult', 12, 2)->default(0);
+            $table->decimal('base_child', 12, 2)->default(0);
+            $table->decimal('base_infant', 12, 2)->default(0);
             
-            $table->timestamp('last_updated_at')->nullable();
+            $table->timestamp('updated_at')->nullable();
             
        
         });

@@ -22,7 +22,7 @@ return new class extends Migration
 
             $table->string('aircraft_type_code', 10)->nullable();
                         
-            $table->timestamp('last_updated_at')->nullable();
+            $table->timestamp('updated_at')->nullable();
 
 
         });

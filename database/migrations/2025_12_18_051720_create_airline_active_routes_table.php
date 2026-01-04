@@ -35,9 +35,8 @@ return new class extends Migration
             $table->boolean('friday')->nullable();
             $table->boolean('saturday')->nullable();
             $table->boolean('sunday')->nullable();
-
-            $table->timestamp('updated_at')->nullable();
             $table->tinyInteger('priority')->nullable();
+            $table->timestamp('updated_at')->nullable();
             $table->index(['iata', 'origin', 'destination']);
             $table->unique(['iata', 'origin', 'destination']);
         });

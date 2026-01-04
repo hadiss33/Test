@@ -41,9 +41,8 @@ class FlightUpdateController extends Controller
 
         $service = $request->input('service');
         $airlineCode = $request->input('airline');
-        $priorityInput = $request->input('priority');
+        $priorityInput = $request->input('period');
 
-        // Get airlines to process
         $airlines = $airlineCode
             ? [$this->repository->getServiceByCode($service, $airlineCode)]
             : $this->repository->getActiveServices($service);
@@ -57,7 +56,6 @@ class FlightUpdateController extends Controller
             ], 404);
         }
 
-        // Determine priorities to process
         $priorities = $priorityInput ? [$priorityInput] : [1, 2, 3, 4];
 
         $results = [];
@@ -93,7 +91,6 @@ class FlightUpdateController extends Controller
                         'duration_seconds' => $priorityDuration
                     ]);
 
-                    // Accumulate totals
                     foreach ($stats as $key => $value) {
                         if (isset($airlineResult['total_stats'][$key])) {
                             $airlineResult['total_stats'][$key] += $value;

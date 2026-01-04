@@ -5,19 +5,21 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-class Tax extends Model
+class FlightTax extends Model
 {
     public $timestamps = false;
 
-    protected $table = 'taxes';
+    protected $table = 'flight_taxes';
 
     protected $fillable = [
         'flight_class_id',
         'passenger_type',
-        'tax_code',
-        'tax_amount',
-        'title_en',
-        'title_fa',
+        'HL',
+        'I6',
+        'LP',
+        'V0',
+        'YQ',
+
     ];
 
     protected $casts = [

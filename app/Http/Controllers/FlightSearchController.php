@@ -129,7 +129,7 @@ class FlightSearchController extends Controller
                     'has_transit' => $flight->details?->has_transit ?? false,
                     'city' => $flight->details?->transit_city,
                 ],
-                'baggage' => [
+                'FlightBaggage' => [
                     'weight' => $flight->details?->baggage_weight,
                     'pieces' => $flight->details?->baggage_pieces,
                 ],

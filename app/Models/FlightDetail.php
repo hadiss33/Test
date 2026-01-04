@@ -6,14 +6,17 @@ use Illuminate\Database\Eloquent\Model;
 
 class FlightDetail extends Model
 {
-    public $timestamps = false;
+
+    const UPDATED_AT = 'updated_at';
+
+    const CREATED_AT = null;
 
     protected $fillable = [
         'flight_id',
         'arrival_datetime',
         'aircraft_code',
         'aircraft_type_code',
-        'last_updated_at'
+        'updated_at'
 
     ];
 
