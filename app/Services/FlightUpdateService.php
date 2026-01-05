@@ -16,6 +16,7 @@ use Illuminate\Http\Client\Pool;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use App\Jobs\FetchFlightFareJob;
 
 class FlightUpdateService
 {
@@ -187,10 +188,14 @@ class FlightUpdateService
             $classUpdateData
         );
 
+        if ($flightClass->wasRecentlyCreated) {
+            FetchFlightFareJob::dispatch($flightClass);
+        }
+
         return $flightClass->wasRecentlyCreated || $flightClass->wasChanged();
     }
 
-    public function getFare(FlightClass $flightClass, $route, array $classData, Carbon $date, $flight_number)
+    public function getFare(FlightClass $flightClass, $route, array $classData, Carbon $date, Flight $flight)
     {
         $classCode = $classData['FlightClass'];
 
@@ -199,8 +204,15 @@ class FlightUpdateService
             $route->destination,
             $classCode,
             $date->format('Y-m-d'),
-            (string) $flight_number
+            (string) $flight->flight_number
         );
+        $classUpdateData = [
+            'payable_adult' => $fareData['AdultTotalPrice'] ?? null,
+            'payable_child' => $fareData['ChildTotalPrice'] ?? null,
+            'payable_infant' => $fareData['InfantTotalPrice'] ?? null,
+            'updated_at' => now(),
+        ];
+        $flightClass->update($classUpdateData);
 
         $hasFareData = ! empty($fareData) && is_array($fareData);
         if ($hasFareData) {
@@ -216,9 +228,9 @@ class FlightUpdateService
         FlightFareBreakdown::updateOrCreate(
             ['flight_class_id' => $flightClass->id],
             [
-                'base_adult' => $fareData['AdultTotalPrice'] ?? null,
-                'base_child' => $fareData['ChildTotalPrice'] ?? null,
-                'base_infant' => $fareData['InfantTotalPrice'] ?? null,
+                'base_adult' => $fareData['AdultFare'] ?? null,
+                'base_child' => $fareData['ChildFare'] ?? null,
+                'base_infant' => $fareData['InfantFare'] ?? null,
                 'updated_at' => now(),
             ]
         );
