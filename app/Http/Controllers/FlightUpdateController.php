@@ -11,6 +11,7 @@ use App\Services\FlightUpdateService;
 use App\Services\FlightCleanupService;
 use Illuminate\Support\Facades\Validator;
 
+
 class FlightUpdateController extends Controller
 {
     protected $repository;
@@ -56,7 +57,7 @@ class FlightUpdateController extends Controller
             ], 404);
         }
 
-        $priorities = $priorityInput ? [$priorityInput] : [1, 2, 3, 4];
+        $priorities = $priorityInput ? [$priorityInput] : [3, 7,60 ,90, 120];
 
         $results = [];
         $startTime = now();

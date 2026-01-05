@@ -16,5 +16,7 @@ interface FlightProviderInterface
     public function determineStatus(string $capacity): string;
     
     public function getConfig(?string $key = null);
+    
+    public function prepareAvailabilityRequestData(string $origin, string $destination, string $date): array;
 
 }

@@ -23,7 +23,12 @@ class FlightTax extends Model
     ];
 
     protected $casts = [
-        'tax_amount' => 'decimal:2',
+        'HL' => 'decimal:2',
+        'I6' => 'decimal:2',
+        'LP' => 'decimal:2',
+        'V0' => 'decimal:2',
+        'YQ' => 'decimal:2',
+
     ];
 
     public function flightClass(): BelongsTo

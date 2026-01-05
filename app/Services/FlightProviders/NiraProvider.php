@@ -231,4 +231,22 @@ class NiraProvider implements FlightProviderInterface
         }
         return $this->config;
     }
+
+    public function prepareAvailabilityRequestData(string $origin, string $destination, string $date): array
+    {
+        return [
+            'url' => $this->config['base_url_ws1'] . '/AvailabilityFareJS.jsp',
+            'query' => [
+                'AirLine' => $this->config['code'],
+                'cbSource' => $origin,
+                'cbTarget' => $destination,
+                'DepartureDate' => $date,
+                'cbAdultQty' => 1,
+                'cbChildQty' => 0,
+                'cbInfantQty' => 0,
+                'OfficeUser' => $this->config['office_user'],
+                'OfficePass' => $this->config['office_pass'],
+            ]
+        ];
+    }
 }
