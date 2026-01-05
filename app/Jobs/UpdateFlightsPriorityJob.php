@@ -44,7 +44,7 @@ class UpdateFlightsPriorityJob implements ShouldQueue
                 $provider = new \App\Services\FlightProviders\NiraProvider($config);
                 $updateService = new \App\Services\FlightUpdateService($provider, $config['code'], $this->service);
                 
-                $stats = $updateService->updateByPriority($this->priority);
+                $stats = $updateService->updateByPeriod($this->priority);
                 
                 Log::info("Priority {$this->priority} update completed for {$config['code']}", $stats);
                 

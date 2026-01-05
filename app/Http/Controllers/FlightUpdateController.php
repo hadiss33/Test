@@ -85,7 +85,7 @@ class FlightUpdateController extends Controller
                     Log::info("Starting update for {$config['code']} - Priority {$priority}");
                     
                     $priorityStartTime = microtime(true);
-                    $stats = $updateService->updateByPriority($priority);
+                    $stats = $updateService->updateByPeriod($priority);
                     $priorityDuration = round(microtime(true) - $priorityStartTime, 2);
 
                     $airlineResult['priorities'][$priority] = array_merge($stats, [
