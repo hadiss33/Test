@@ -176,7 +176,7 @@ class FlightUpdateService
             'payable_infant' => null,
             'available_seats' => $this->provider->parseAvailableSeats($cap, $classCode),
             'status' => $this->provider->determineStatus($cap),
-            'last_updated_at' => now(),
+            'updated_at' => now(),
         ];
 
         $flightClass = FlightClass::updateOrCreate(
@@ -216,10 +216,10 @@ class FlightUpdateService
         FlightFareBreakdown::updateOrCreate(
             ['flight_class_id' => $flightClass->id],
             [
-                'total_adult' => $fareData['AdultTotalPrice'] ?? null,
-                'total_child' => $fareData['ChildTotalPrice'] ?? null,
-                'total_infant' => $fareData['InfantTotalPrice'] ?? null,
-                'last_updated_at' => now(),
+                'base_adult' => $fareData['AdultTotalPrice'] ?? null,
+                'base_child' => $fareData['ChildTotalPrice'] ?? null,
+                'base_infant' => $fareData['InfantTotalPrice'] ?? null,
+                'updated_at' => now(),
             ]
         );
     }
