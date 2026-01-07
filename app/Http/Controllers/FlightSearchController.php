@@ -2,13 +2,14 @@
 
 namespace App\Http\Controllers;
 
-use Illuminate\Http\Request;
+use App\Http\Resources\FlightResource;
 use App\Models\Flight;
+use Carbon\Carbon;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 
 class FlightSearchController extends Controller
 {
-
     public function search(Request $request)
     {
         $validator = Validator::make($request->all(), [
@@ -24,10 +25,10 @@ class FlightSearchController extends Controller
         }
 
         $query = Flight::with(['route', 'classes.fareBreakdown', 'details'])
-            ->whereHas('route', function($q) use ($request) {
+            ->whereHas('route', function ($q) use ($request) {
                 $q->where('origin', $request->origin)
-                  ->where('destination', $request->destination);
-                
+                    ->where('destination', $request->destination);
+
                 if ($request->airline) {
                     $q->where('iata', $request->airline);
                 }
@@ -37,19 +38,19 @@ class FlightSearchController extends Controller
             ->orderBy('departure_datetime');
 
         if ($request->class) {
-            $query->whereHas('classes', function($q) use ($request) {
+            $query->whereHas('classes', function ($q) use ($request) {
                 $q->where('class_code', $request->class)
-                  ->available();
+                    ->available();
             });
         }
 
-        $flights = $query->get()->map(function($flight) use ($request) {
+        $flights = $query->get()->map(function ($flight) use ($request) {
             $classes = $flight->classes;
-            
+
             if ($request->class) {
                 $classes = $classes->where('class_code', $request->class);
             }
-            
+
             return [
                 'id' => $flight->id,
                 'flight_number' => $flight->flight_number,
@@ -61,7 +62,7 @@ class FlightSearchController extends Controller
                 'duration_minutes' => $flight->details?->flight_duration,
                 'aircraft_type' => $flight->aircraft_type,
                 'has_transit' => $flight->details?->has_transit ?? false,
-                'classes' => $classes->map(function($class) {
+                'classes' => $classes->map(function ($class) {
                     return [
                         'code' => $class->class_code,
                         'status' => $class->status,
@@ -71,7 +72,7 @@ class FlightSearchController extends Controller
                             'child' => (float) $class->price_child,
                             'infant' => (float) $class->price_infant,
                         ],
-                        'fare_breakdown' => $class->fareBreakdown->keyBy('passenger_type')->map(function($fare) {
+                        'fare_breakdown' => $class->fareBreakdown->keyBy('passenger_type')->map(function ($fare) {
                             return [
                                 'base_fare' => (float) $fare->base_fare,
                                 'taxes' => [
@@ -91,7 +92,7 @@ class FlightSearchController extends Controller
         return response()->json([
             'status' => 'success',
             'count' => $flights->count(),
-            'data' => $flights
+            'data' => $flights,
         ]);
     }
 
@@ -100,7 +101,7 @@ class FlightSearchController extends Controller
         $flight = Flight::with(['route', 'classes.fareBreakdown', 'details'])
             ->find($id);
 
-        if (!$flight) {
+        if (! $flight) {
             return response()->json(['error' => 'Flight not found'], 404);
         }
 
@@ -134,7 +135,7 @@ class FlightSearchController extends Controller
                     'pieces' => $flight->details?->baggage_pieces,
                 ],
                 'refund_rules' => $flight->details?->refund_rules,
-                'classes' => $flight->classes->map(function($class) {
+                'classes' => $flight->classes->map(function ($class) {
                     return [
                         'code' => $class->class_code,
                         'status' => $class->status,
@@ -149,7 +150,7 @@ class FlightSearchController extends Controller
                     ];
                 }),
                 'last_updated' => $flight->last_updated_at->toIso8601String(),
-            ]
+            ],
         ]);
     }
 
@@ -160,6 +161,66 @@ class FlightSearchController extends Controller
             'HH' => 'تابان', 'IV' => 'کاسپین', 'I3' => 'آتا',
             'NV' => 'کارون', 'PA' => 'پارس ایر', 'ZV' => 'زاگرس',
         ];
+
         return $airlines[$iata] ?? $iata;
+    }
+
+    public function getAdvancedFlights(Request $request)
+    {
+        if ($request->has('options') && is_string($request->input('options'))) {
+            $rawOptions = $request->input('options');
+            $cleanOptions = trim($rawOptions, '[]');
+
+            if (! empty($cleanOptions)) {
+                $optionsArray = array_map('trim', explode(',', $cleanOptions));
+                $request->merge(['options' => $optionsArray]);
+            } else {
+                $request->merge(['options' => []]);
+            }
+        }
+
+        $validator = Validator::make($request->all(), [
+            'from_date' => 'required|date',
+            'to_date' => 'required|date|after_or_equal:from_date',
+            'origin' => 'nullable|string|size:3',
+            'destination' => 'nullable|string|size:3',
+            'airline' => 'nullable|string',
+            'options' => 'nullable|array',
+            'options.*' => 'string',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['errors' => $validator->errors()], 422);
+        }
+
+        $start = Carbon::parse($request->from_date);
+        $end = Carbon::parse($request->to_date);
+        $diff = $start->diffInDays($end);
+
+        if ($diff > 30) {
+            return response()->json(['error' => 'Trip duration cannot exceed 30 days.'], 422);
+        }
+
+        $relations = ['route', 'details', 'classes']; 
+
+        if ($request->has('options')) {
+            foreach ($request->options as $opt) {
+                if (isset(Flight::RELATION_MAP[$opt])) {
+                    $relations[] = Flight::RELATION_MAP[$opt];
+                }
+            }
+        }
+
+        $flights = Flight::query()
+            ->with(array_unique($relations))
+            ->filter($request->only(['from_date', 'to_date', 'origin', 'destination', 'airline']))
+            ->orderBy('departure_datetime')
+            ->get();
+
+        return response()->json([
+            'status' => 'success',
+            'count' => $flights->count(),
+            'data' => FlightResource::collection($flights),
+        ]);
     }
 }

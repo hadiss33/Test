@@ -21,5 +21,8 @@ Route::prefix('flights')->group(function() {
     
     
     Route::post('/check-missing', [FlightUpdateController::class, 'checkMissing']);
+
+    Route::post('/advanced-search', [FlightSearchController::class, 'getAdvancedFlights']);
+
     
 });

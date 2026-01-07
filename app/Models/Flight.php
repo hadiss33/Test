@@ -3,12 +3,11 @@
 namespace App\Models;
 
 use Carbon\Carbon;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 
 class Flight extends Model
 {
-    
-    
     const UPDATED_AT = 'updated_at';
 
     const CREATED_AT = null;
@@ -31,7 +30,7 @@ class Flight extends Model
         return $this->belongsTo(AirlineActiveRoute::class, 'airline_active_route_id');
     }
 
-    public function activeRoute() 
+    public function activeRoute()
     {
         return $this->belongsTo(AirlineActiveRoute::class, 'airline_active_route_id');
     }
@@ -91,8 +90,9 @@ class Flight extends Model
 
     public function scopeByPriority($query, int $priority)
     {
-        $priorityCurrent = $this->calculatePriority(); 
-        return $query->where($priorityCurrent , $priority);
+        $priorityCurrent = $this->calculatePriority();
+
+        return $query->where($priorityCurrent, $priority);
     }
 
     public function scopeOnDate($query, Carbon $date)
@@ -104,4 +104,43 @@ class Flight extends Model
     {
         return $query->where('missing_count', '>', 0);
     }
+
+    public const RELATION_MAP = [
+        'Rule' => 'classes.rules',
+        'FareBreakdown' => 'classes.fareBreakdown',
+        'Tax' => 'classes.taxes',        
+        'TaxDetails' => 'classes.taxes',    
+        'Baggage' => 'classes.fareBaggage',
+    ];
+
+
+    public function scopeFilter(Builder $query, array $filters): Builder
+    {
+        if (! empty($filters['from_date'])) {
+            $query->whereDate('departure_datetime', $filters['from_date']);
+        }
+
+        if (! empty($filters['to_date'])) {
+            $query->whereHas('details', function ($q) use ($filters) {
+                $q->whereDate('arrival_datetime', $filters['to_date']);
+            });
+        }
+
+        if (! empty($filters['origin']) || ! empty($filters['destination']) || ! empty($filters['airline'])) {
+            $query->whereHas('route', function ($q) use ($filters) {
+                if (! empty($filters['origin'])) {
+                    $q->where('origin', $filters['origin']);
+                }
+                if (! empty($filters['destination'])) {
+                    $q->where('destination', $filters['destination']);
+                }
+                if (! empty($filters['airline'])) {
+                    $q->where('iata', $filters['airline']);
+                }
+            });
+        }
+
+        return $query;
+    }
+
 }
