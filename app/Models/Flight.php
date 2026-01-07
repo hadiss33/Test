@@ -108,22 +108,20 @@ class Flight extends Model
     public const RELATION_MAP = [
         'Rule' => 'classes.rules',
         'FareBreakdown' => 'classes.fareBreakdown',
-        'Tax' => 'classes.taxes',        
-        'TaxDetails' => 'classes.taxes',    
+        'Tax' => 'classes.taxes',
+        'TaxDetails' => 'classes.taxes',
         'Baggage' => 'classes.fareBaggage',
     ];
 
-
     public function scopeFilter(Builder $query, array $filters): Builder
     {
-        if (! empty($filters['from_date'])) {
-            $query->whereDate('departure_datetime', $filters['from_date']);
-        }
 
-        if (! empty($filters['to_date'])) {
-            $query->whereHas('details', function ($q) use ($filters) {
-                $q->whereDate('arrival_datetime', $filters['to_date']);
-            });
+        if (! empty($filters['datetime_start']) && ! empty($filters['datetime_end'])) {
+            $query->whereDate('departure_datetime', '>=', $filters['datetime_start'])
+                ->whereDate('departure_datetime', '<=', $filters['datetime_end']);
+        }
+        elseif (! empty($filters['datetime_start'])) {
+            $query->whereDate('departure_datetime', '>=', $filters['datetime_start']);
         }
 
         if (! empty($filters['origin']) || ! empty($filters['destination']) || ! empty($filters['airline'])) {
@@ -142,5 +140,4 @@ class Flight extends Model
 
         return $query;
     }
-
 }

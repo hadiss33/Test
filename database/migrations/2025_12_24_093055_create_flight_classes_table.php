@@ -28,7 +28,7 @@ return new class extends Migration
             $table->timestamp('updated_at')->nullable();
             
             $table->unique(['flight_id', 'class_code'], 'unique_flight_class');
-            $table->index(['status', 'available_seats']);
+            $table->index(['status', 'flight_id']);
         });
     }
 

@@ -167,7 +167,13 @@ class FlightSearchController extends Controller
 
     public function getAdvancedFlights(Request $request)
     {
-        if ($request->has('options') && is_string($request->input('options'))) {
+
+        if (! $request->has('options')) {
+            $request->merge([
+                'options' => ['FareBreakdown', 'Baggage', 'Tax', 'Rule'],
+            ]);
+        }
+        elseif (is_string($request->input('options'))) {
             $rawOptions = $request->input('options');
             $cleanOptions = trim($rawOptions, '[]');
 
@@ -180,8 +186,8 @@ class FlightSearchController extends Controller
         }
 
         $validator = Validator::make($request->all(), [
-            'from_date' => 'required|date',
-            'to_date' => 'required|date|after_or_equal:from_date',
+            'datetime_start' => 'required|date',
+            'datetime_end' => 'required|date|after_or_equal:datetime_start',
             'origin' => 'nullable|string|size:3',
             'destination' => 'nullable|string|size:3',
             'airline' => 'nullable|string',
@@ -193,8 +199,8 @@ class FlightSearchController extends Controller
             return response()->json(['errors' => $validator->errors()], 422);
         }
 
-        $start = Carbon::parse($request->from_date);
-        $end = Carbon::parse($request->to_date);
+        $start = Carbon::parse($request->datetime_start);
+        $end = Carbon::parse($request->datetime_end);
         $diff = $start->diffInDays($end);
 
         if ($diff > 30) {
@@ -213,7 +219,7 @@ class FlightSearchController extends Controller
 
         $flights = Flight::query()
             ->with(array_unique($relations))
-            ->filter($request->only(['from_date', 'to_date', 'origin', 'destination', 'airline']))
+            ->filter($request->only(['datetime_start', 'datetime_end', 'origin', 'destination', 'airline']))
             ->orderBy('departure_datetime')
             ->get();
 

@@ -21,6 +21,7 @@ return new class extends Migration
             $table->timestamp('updated_at')->nullable();
             
             $table->unique(['airline_active_route_id', 'flight_number', 'departure_datetime'], 'unique_flight');
+            $table->index(['departure_datetime', 'flight_number']);
         });
     }
 
