@@ -3,6 +3,8 @@
 namespace App\Enums;
 use App\Services\FlightProviders\NiraProvider;
 use App\Services\FlightProviders\SepehrProvider;
+use App\Services\FlightAnalyze\{NiraAnalyze , SepehrAnalyze};
+
 
 enum ServiceProviderEnum: string
 {
@@ -15,6 +17,13 @@ enum ServiceProviderEnum: string
             self::Nira => NiraProvider::class,
             self::Sepehr => SepehrProvider::class,
 
+        };
+    }
+    public function getAnalyzer(): ?string
+    {
+        return match ($this) {
+            self::Nira => NiraAnalyze::class,
+            self::Sepehr => SepehrAnalyze::class,
         };
     }
 }

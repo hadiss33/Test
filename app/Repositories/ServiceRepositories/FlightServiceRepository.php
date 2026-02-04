@@ -22,6 +22,7 @@ class FlightServiceRepository implements FlightServiceRepositoryInterface
                 ->active()
                 ->byType('api')
                 ->byService($serviceName)
+                ->where('url', 'https://sepehrapitest.ir')
                 ->get()
                 ->map(fn ($item) => $this->transformToConfig($item, $serviceName))
 

@@ -47,8 +47,8 @@ class RouteSyncController extends Controller
                 $syncResult = $syncService->sync();
 
                 $results[] = [
-                    'airline' => $airlineConfig['name'],
-                    'iata' => $airlineConfig['code'],
+                    'airline' => $airlineConfig['name'] ?? '',
+                    'iata' => $airlineConfig['code'] ?? '',
                     'status' => $syncResult['success'] ? 'success' : 'failed',
                     'routes_count' => $syncResult['routes_count'] ?? 0,
                     'message' => $syncResult['message'] ?? '',

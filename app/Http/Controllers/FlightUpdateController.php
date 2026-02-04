@@ -65,7 +65,7 @@ class FlightUpdateController extends Controller
         foreach ($airlines as $config) {
             $airlineResult = [
                 'airline' => $config['name'],
-                'iata' => $config['code'],
+                'iata' => $config['code'] ?? null,
                 'priorities' => [],
                 'total_stats' => [
                     'checked' => 0,

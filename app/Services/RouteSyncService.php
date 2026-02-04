@@ -6,6 +6,7 @@ use App\Models\{Flight, FlightClass, FlightDetail, FlightRawData, FlightFareBrea
 use App\Services\FlightProviders\FlightProviderInterface;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\{DB, Log};
+use App\Enums\ServiceProviderEnum;
 
 
 class RouteSyncService
@@ -14,7 +15,7 @@ class RouteSyncService
     protected $iata;
     protected $service;
 
-    public function __construct(FlightProviderInterface $provider, string $iata, string $service = 'nira')
+    public function __construct(FlightProviderInterface $provider, ?string $iata, string $service = 'nira')
     {
         $this->provider = $provider;
         $this->iata = $iata;
@@ -28,14 +29,22 @@ class RouteSyncService
         $toDate = now()->addDays(120)->format('Y-m-d');
         
         $flights = $this->provider->getFlightsSchedule($fromDate, $toDate);
-        
+
+        $interface = $this->provider->getConfig();
+        $normalayzerClass = ServiceProviderEnum::from($this->service)->getAnalyzer();
+        $routes = (new $normalayzerClass())->adaptFlightsToRoutes($flights , $interface['id'] , $this->iata);
         if (empty($flights)) {
             return ['success' => false, 'message' => 'No flights returned'];
         }
+        
 
-        $routes = $this->analyzeRoutes($flights);
         $this->cleanupOldRoutes(array_keys($routes));
+        try{
         $this->saveRoutes($routes);
+
+        }catch (\Exception $e){
+            Log::error("Error saving routes: " . $e->getMessage());
+        }
 
         return [
             'success' => true,
@@ -44,34 +53,7 @@ class RouteSyncService
         ];
     }
 
-    protected function analyzeRoutes(array $flights): array
-    {
-        $fullConfig = $this->provider->getConfig();
-        $routes = [];
 
-        foreach ($flights as $flight) {
-            $origin = $flight['Origin'];
-            $destination = $flight['Destination'];
-            $date = Carbon::parse($flight['DepartureDateTime']);
-            $dayName = strtolower($date->englishDayOfWeek);
-
-            $key = "{$this->iata}:{$origin}-{$destination}";
-            
-            if (!isset($routes[$key])) {
-                $routes[$key] = [
-                    'origin' => $origin,
-                    'destination' => $destination,
-                    'application_interfaces_id' => $fullConfig['id'] ?? null,    
-                    'monday' => null, 'tuesday' => null, 'wednesday' => null,
-                    'thursday' => null, 'friday' => null, 'saturday' => null, 'sunday' => null,
-                ];
-            }
-
-            $routes[$key][$dayName] = true;
-        }
-
-        return $routes;
-    }
 
     protected function cleanupOldRoutes(array $activeRouteKeys): void
     {
@@ -95,9 +77,10 @@ class RouteSyncService
     {
 
         foreach ($routes as $routeData) {
-            \App\Models\AirlineActiveRoute::updateOrCreate(
+            try{
+                            \App\Models\AirlineActiveRoute::updateOrCreate(
                 [
-                    'iata' => $this->iata,
+                    'iata' => $this->iata ?? null,
                     'origin' => $routeData['origin'],
                     'destination' => $routeData['destination'],
                     'application_interfaces_id' => $routeData['application_interfaces_id'],
@@ -112,6 +95,10 @@ class RouteSyncService
                     'sunday' => $routeData['sunday'],
                 ]
             );
+            }catch (\Exception $e){dd($e);
+                Log::error("Error saving route: " . $e->getMessage());
+            }
+
         }
     }
 }
