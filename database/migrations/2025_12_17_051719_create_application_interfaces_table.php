@@ -15,7 +15,7 @@ return new class extends Migration
             $table->bigInteger('id', true);
             $table->bigInteger('branch');
             $table->enum('type', ['recaptcha', 'sms', 'ami', 'ftp', 'support', 'api', 'smtp', 'drive']);
-            $table->enum('service', ['airplus', 'google', 'gmini', 'irnoti', 'issabel', 'goftino', 'navasan', 'ravis', 'sepehr', 'nira', 'liara', 'tport', 'sepehr_hotel', 'jibit', 'snapptrip_hotel']);
+            $table->enum('service', ['airplus', 'google', 'gmini', 'irnoti', 'issabel', 'goftino', 'navasan', 'ravis', 'sepehr', 'nira', 'liara', 'tport', 'sepehr_hotel', 'jibit', 'snapptrip_hotel','snapptrip_flight']);
             $table->enum('object_type', ['colleague'])->nullable();
             $table->bigInteger('object')->nullable();
             $table->string('url');

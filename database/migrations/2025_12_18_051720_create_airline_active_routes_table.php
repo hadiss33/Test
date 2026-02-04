@@ -20,7 +20,7 @@ return new class extends Migration
     {
         Schema::create('airline_active_routes', function (Blueprint $table) {
             $table->id();
-            $table->string('iata');
+            $table->string('iata')->nullable();
             $table->string('origin');
             $table->string('destination');
             $table->bigInteger('application_interfaces_id');
@@ -37,8 +37,7 @@ return new class extends Migration
             $table->boolean('sunday')->nullable();
             $table->tinyInteger('priority')->nullable();
             $table->timestamp('updated_at')->nullable();
-            $table->index(['iata', 'origin', 'destination']);
-            $table->unique(['iata', 'origin', 'destination']);
+
         });
     }
 

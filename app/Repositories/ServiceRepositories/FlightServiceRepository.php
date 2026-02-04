@@ -23,8 +23,15 @@ class FlightServiceRepository implements FlightServiceRepositoryInterface
                 ->byType('api')
                 ->byService($serviceName)
                 ->get()
-                ->map(fn($item) => $this->transformToConfig($item, $serviceName))
-                ->filter(fn($item) => $item['code'] !== null)
+                ->map(fn ($item) => $this->transformToConfig($item, $serviceName))
+
+                ->filter(function ($item) use ($serviceName) {
+                    if ($serviceName === 'nira') {
+                        return $item['code'] !== null;
+                    }
+
+                    return true; 
+                })
                 ->values()
                 ->toArray();
         });
@@ -39,6 +46,7 @@ class FlightServiceRepository implements FlightServiceRepositoryInterface
             ->get()
             ->first(function ($item) use ($code) {
                 $data = $item->data;
+
                 return isset($data['iata']) && $data['iata'] === $code;
             });
 
@@ -54,6 +62,7 @@ class FlightServiceRepository implements FlightServiceRepositoryInterface
             ->get()
             ->contains(function ($item) use ($code) {
                 $data = $item->data;
+
                 return isset($data['iata']) && $data['iata'] === $code;
             });
     }
@@ -78,6 +87,9 @@ class FlightServiceRepository implements FlightServiceRepositoryInterface
         return [
             'id' => $item->id,
             'code' => null,
+            'url' => $item->url,
+            'username' => $item->username,
+            'password' => $item->password,
             'service' => $serviceName,
         ];
     }
@@ -106,5 +118,23 @@ class FlightServiceRepository implements FlightServiceRepositoryInterface
     public function clearCache(string $serviceName): void
     {
         Cache::forget("flight_services_{$serviceName}");
+    }
+
+    public function getService(string $serviceName): ?array
+    {
+        $item = $this->model
+            ->active()
+            ->where('service', $serviceName)
+            ->get()
+            ->first();
+
+        return [
+            'id' => $item->id,
+            'code' => $data['iata'] ?? null,
+            'url' => $item->url,
+            'username' => $item->username,
+            'password' => $item->password,
+            'service' => $serviceName,
+        ];
     }
 }

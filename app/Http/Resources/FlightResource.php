@@ -3,65 +3,353 @@
 namespace App\Http\Resources;
 
 use Illuminate\Http\Resources\Json\JsonResource;
-use Carbon\Carbon;
+use Illuminate\Http\Request;
 
 class FlightResource extends JsonResource
 {
-    public function toArray($request)
+    /**
+     * Transform the resource into an array.
+     *
+     * @return array<string, mixed>
+     */
+    public function toArray(Request $request): array
     {
+        $options = $request->input('options', []);
+        
         return [
-            "charter_id" => $this->charter_id ?? false,
-            "serial" => $this->serial_number ?? false,
-            "supplier" => $this->supplier_id ?? false,
-            "id" => $this->unique_id ?? false,
-            "plan" => $this->plan ?? false,
+            'charter_id' => $this->id ?? false,
+            'serial' => $this->flight_number ?? false,
+            'supplier' => 1,
+            'id' => $this->generateUniqueId(),
+            'plan' => false,
             
-            "details" => [
-                "airline" => [
-                    "iata" => $this->airline?->iata_code ?? "", 
-                    "icao" => $this->airline?->icao_code ?? "",
-                    "logo" => $this->airline?->logo_url ?? "",
-                    "title" => [
-                        "en" => $this->airline?->name_en ?? "",
-                        "fa" => $this->airline?->name_fa ?? "",
-                    ]
-                ],
-                "origin" => [
-                    "iata" => $this->origin?->code ?? "",
-                    "terminal" => $this->origin_terminal ?: false
-                ],
-                "destination" => [
-                    "iata" => $this->destination?->code ?? "",
-                    "terminal" => $this->destination_terminal ?: false
-                ],
-                "aircraft" => [
-                    "iata" => $this->aircraft?->iata ?? "",
-                    "icao" => $this->aircraft?->icao ?? "",
-                    "title" => [
-                        "en" => $this->aircraft?->name_en ?? "",
-                        "fa" => $this->aircraft?->name_fa ?? "",
-                    ]
-                ],
-                "flight_number" => $this->flight_number,
-                "steps" => $this->steps ?: false,
-                "duration" => $this->duration ?: false,
-                
-                "datetime" => $this->formatDate($this->departure_time),
-                "arrival_datetime" => $this->formatDate($this->arrival_time) ?: false,
-            ],
-
-            "items" => $this->flightItems ? $this->flightItems->map(function ($item) {
-                return $this->formatItem($item);
-            }) : [],
-
-            "description" => [
-                "public" => $this->public_description ?: false,
-                "financial" => $this->financial_description ?: false,
-            ]
+            'details' => $this->formatDetails(),
+            'items' => $this->formatItems($options),
+            'description' => $this->formatDescription(),
         ];
     }
 
-    public function with($request)
+
+    protected function formatDetails(): array
+    {
+        return [
+            // 'airline' => [
+            //     'iata' => $this->route->iata ?? '',
+            //     'icao' => $this->getAirlineIcao(),
+            //     'logo' => $this->getAirlineLogo(),
+            //     'title' => [
+            //         'en' => $this->getAirlineNameEn(),
+            //         'fa' => $this->getAirlineNameFa(),
+            //     ],
+            // ],
+            
+            'origin' => [
+                'iata' => $this->route->origin ?? '',
+                'terminal' => $this->details->origin_terminal ?? null,
+            ],
+            
+            'destination' => [
+                'iata' => $this->route->destination ?? '',
+                'terminal' => $this->details->destination_terminal ?? null,
+            ],
+            
+            'aircraft' => [
+                'iata' => $this->details->aircraft_code ?? '',
+                'icao' => $this->details->aircraft_type_code ?? '',
+                'title' => [
+                    'en' => $this->getAircraftNameEn(),
+                    'fa' => $this->getAircraftNameFa(),
+                ],
+            ],
+            
+            'flight_number' => (string) $this->flight_number,
+            'steps' => $this->details->has_transit ?? null,
+            'duration' => $this->details->flight_duration ?? null,
+            'datetime' => $this->formatDateTime($this->departure_datetime),
+            'arrival_datetime' => $this->formatDateTime($this->details?->arrival_datetime) ?: null,
+        ];
+    }
+
+
+    protected function formatItems(array $options): array
+    {
+        if (!$this->relationLoaded('classes')) {
+            return [];
+        }
+
+        return $this->classes->map(function ($class) use ($options) {
+            return [
+                'item_id' => $class->id,
+                'title' => $class->class_code,
+                'reservable' => $class->isAvailable(),
+                
+                'statistics' => [
+                    'capacity' => $class->available_seats ?? 0,
+                    'waiting' => 0, 
+                ],
+                
+                'max_purchase' => $class->available_seats ?? 9,
+                'rules' => $this->formatRules($class, $options),
+                'services' => $this->formatServices($class) ?: null,
+                'baggage' => $this->formatBaggage($class, $options),
+                'financial' => $this->formatFinancial($class, $options),
+            ];
+        })->toArray();
+    }
+
+
+    protected function formatRules($class, array $options): mixed
+    {
+        if (!in_array('Rule', $options) || !$class->relationLoaded('rules')) {
+            return null;
+        }
+
+        if ($class->rules->isEmpty()) {
+            return null;
+        }
+
+        return $class->rules->map(function ($rule) {
+            return [
+                'text' => $rule->rules ?? '',
+                'penalty_percentage' => $rule->penalty_percentage ?? 0,
+            ];
+        })->toArray();
+    }
+
+
+    protected function formatServices($class): mixed
+    {
+        return false;
+    }
+
+
+    protected function formatBaggage($class, array $options): array
+    {
+        $defaultBaggage = [
+            'trunk' => [
+                'adult' => ['number' => 1, 'weight' => 20],
+                'child' => ['number' => 1, 'weight' => 20],
+                'infant' => ['number' => 0, 'weight' => 0],
+            ],
+            'hand' => [
+                'adult' => ['number' => 1, 'weight' => 7],
+                'child' => ['number' => 1, 'weight' => 7],
+                'infant' => ['number' => 0, 'weight' => 0],
+            ],
+        ];
+
+        if (!in_array('Baggage', $options) || !$class->relationLoaded('fareBaggage')) {
+            return $defaultBaggage;
+        }
+
+        $baggage = $class->fareBaggage->first();
+
+        if (!$baggage) {
+            return $defaultBaggage;
+        }
+
+        return [
+            'trunk' => [
+                'adult' => [
+                    'number' => $baggage->adult_pieces ?? 1,
+                    'weight' => $baggage->adult_weight ?? 20,
+                ],
+                'child' => [
+                    'number' => $baggage->child_pieces ?? 1,
+                    'weight' => $baggage->child_weight ?? 20,
+                ],
+                'infant' => [
+                    'number' => $baggage->infant_pieces ?? 0,
+                    'weight' => $baggage->infant_weight ?? 0,
+                ],
+            ],
+            'hand' => [
+                'adult' => ['number' => 1, 'weight' => 7],
+                'child' => ['number' => 1, 'weight' => 7],
+                'infant' => ['number' => 0, 'weight' => 0],
+            ],
+        ];
+    }
+
+    protected function formatFinancial($class, array $options): array
+    {
+        $showFareBreakdown = in_array('FareBreakdown', $options);
+        $showTax = in_array('Tax', $options) || in_array('TaxDetails', $options);
+
+        return [
+            'adult' => $this->formatPassengerFinancial($class, 'adult', $showFareBreakdown, $showTax),
+            'child' => $this->formatPassengerFinancial($class, 'child', $showFareBreakdown, $showTax),
+            'infant' => $this->formatPassengerFinancial($class, 'infant', $showFareBreakdown, $showTax),
+        ];
+    }
+
+    protected function formatPassengerFinancial($class, string $type, bool $showBreakdown, bool $showTax): array
+    {
+        $priceField = "payable_{$type}";
+        $totalPrice = (float) ($class->$priceField ?? 0);
+
+        $baseFare = $totalPrice;
+        if ($showBreakdown && $class->relationLoaded('fareBreakdown')) {
+            $breakdown = $class->fareBreakdown->first();
+            if ($breakdown) {
+                $baseFare = (float) ($breakdown->{"base_{$type}"} ?? $totalPrice);
+            }
+        }
+
+        $taxes = false;
+        if ($showTax && $class->relationLoaded('taxes')) {
+            $taxRecord = $class->taxes->where('passenger_type', $type)->first();
+            if ($taxRecord) {
+                $taxes = $this->calculateTotalTax($taxRecord);
+            }
+        }
+
+        return [
+            'base_fare' => $baseFare,
+            'taxes' => $taxes,
+            'total_fare' => $totalPrice,
+            'payable' => $totalPrice,
+            'markups' => 0, 
+            'commissions' => 0, 
+            'citizenship' => 0, 
+        ];
+    }
+
+
+    protected function calculateTotalTax($taxRecord): float
+    {
+        $total = 0.0;
+        $taxColumns = ['HL', 'I6', 'LP', 'V0', 'YQ'];
+        
+        foreach ($taxColumns as $col) {
+            $total += (float) ($taxRecord->$col ?? 0);
+        }
+        
+        return $total;
+    }
+
+
+    protected function formatDescription(): array
+    {
+        return [
+            'public' => 0,
+            'financial' => 0, 
+        ];
+    }
+
+
+    protected function generateUniqueId(): string
+    {
+        return base64_encode($this->id . '-' . $this->departure_datetime->timestamp);
+    }
+
+    protected function formatDateTime($datetime): string|false
+    {
+        if (!$datetime) {
+            return false;
+        }
+
+        try {
+            return \Carbon\Carbon::parse($datetime)->format('Y-m-d H:i');
+        } catch (\Exception $e) {
+            return false;
+        }
+    }
+
+    protected function getAirlineIcao(): string
+    {
+        $icaoMap = [
+            'EP' => 'IRA',
+            'FP' => 'FPI',
+            'HH' => 'TBN',
+            'IV' => 'CPN',
+            'I3' => 'IRC',
+            'NV' => 'KRN',
+            'PA' => 'PRS',
+            'Y9' => 'KIS',
+            'ZV' => 'IZG',
+            'QB' => 'QSM',
+        ];
+
+        $iata = $this->route->iata ?? '';
+        return $icaoMap[$iata] ?? '';
+    }
+
+    protected function getAirlineLogo(): string
+    {
+        $iata = $this->route->iata ?? '';
+        return $iata ? asset("images/airlines/{$iata}.png") : '';
+    }
+
+    protected function getAirlineNameEn(): string
+    {
+        $namesEn = [
+            'EP' => 'Iran Air',
+            'FP' => 'Fly Persia',
+            'HH' => 'Taban Air',
+            'IV' => 'Caspian Airlines',
+            'I3' => 'ATA Airlines',
+            'NV' => 'Karun Airlines',
+            'PA' => 'Pars Air',
+            'Y9' => 'Kish Air',
+            'ZV' => 'Zagros Airlines',
+            'QB' => 'Qeshm Air',
+        ];
+
+        $iata = $this->route->iata ?? '';
+        return $namesEn[$iata] ?? '';
+    }
+
+    protected function getAirlineNameFa(): string
+    {
+        $namesFa = [
+            'EP' => 'ایران ایر',
+            'FP' => 'فلای پرشیا',
+            'HH' => 'تابان',
+            'IV' => 'کاسپین',
+            'I3' => 'آتا',
+            'NV' => 'کارون',
+            'PA' => 'پارس ایر',
+            'Y9' => 'کیش ایر',
+            'ZV' => 'زاگرس',
+            'QB' => 'قشم ایر',
+        ];
+
+        $iata = $this->route->iata ?? '';
+        return $namesFa[$iata] ?? '';
+    }
+
+    protected function getAircraftNameEn(): string
+    {
+        $types = [
+            'MD8' => 'McDonnell Douglas MD-80',
+            '733' => 'Boeing 737-300',
+            '738' => 'Boeing 737-800',
+            'AT7' => 'ATR 72',
+            'AT5' => 'ATR 42',
+            'F100' => 'Fokker 100',
+        ];
+
+        $code = $this->details?->aircraft_type_code ?? '';
+        return $types[$code] ?? '';
+    }
+
+    protected function getAircraftNameFa(): string
+    {
+        $types = [
+            'MD8' => 'مک‌دانل داگلاس ام‌دی-۸۰',
+            '733' => 'بوئینگ ۷۳۷-۳۰۰',
+            '738' => 'بوئینگ ۷۳۷-۸۰۰',
+            'AT7' => 'ای‌تی‌آر ۷۲',
+            'AT5' => 'ای‌تی‌آر ۴۲',
+            'F100' => 'فوکر ۱۰۰',
+        ];
+
+        $code = $this->details?->aircraft_type_code ?? '';
+        return $types[$code] ?? '';
+    }
+
+    public function with(Request $request): array
     {
         return [
             'meta' => [
@@ -70,68 +358,12 @@ class FlightResource extends JsonResource
         ];
     }
 
-    private function formatDate($date)
+    public static function collection($resource)
     {
-        if (!$date) return null;
-        try {
-            return \Carbon\Carbon::parse($date)->format('Y-m-d H:i');
-        } catch (\Exception $e) {
-            return null;
-        }
-    }
-
-    private function formatItem($item)
-    {
-        return [
-            "item_id" => $item->id,
-            "title" => $item->title,
-            "reservable" => (bool) $item->is_reservable,
-            "statistics" => [
-                "capacity" => $item->capacity,
-                "waiting" => $item->waiting_list ?? 0,
+        return parent::collection($resource)->additional([
+            'meta' => [
+                'timestamp' => now()->toDateTimeString(),
             ],
-            "max_purchase" => $item->max_purchase,
-            "rules" => $item->rules,
-            "services" => $item->services ?: false,
-            
-            "baggage" => [
-                "trunk" => $this->formatBaggage($item->baggage_trunk),
-                "hand" => $this->formatBaggage($item->baggage_hand),
-            ],
-
-            "financial" => [
-                "adult" => $this->formatFinancial($item->prices?->where('type', 'adult')->first()),
-                "child" => $this->formatFinancial($item->prices?->where('type', 'child')->first()),
-                "infant" => $this->formatFinancial($item->prices?->where('type', 'infant')->first()),
-            ],
-        ];
-    }
-
-    private function formatBaggage($baggageData)
-    {
-        if (!$baggageData) return null;
-        
-        $data = (object) $baggageData;
-
-        return [
-            "adult" => ["number" => $data->adult_count ?? 1, "weight" => $data->adult_weight ?? 20],
-            "child" => ["number" => $data->child_count ?? 1, "weight" => $data->child_weight ?? 20],
-            "infant" => ["number" => $data->infant_count ?? 0, "weight" => $data->infant_weight ?? 0]
-        ];
-    }
-
-    private function formatFinancial($priceData)
-    {
-        if (!$priceData) return null;
-
-        return [
-            "base_fare" => $priceData->base_fare,
-            "taxes" => $priceData->tax_amount ?: false,
-            "total_fare" => $priceData->total_amount,
-            "payable" => $priceData->payable_amount,
-            "markups" => $priceData->markup ?: false,
-            "commissions" => $priceData->commission ?: false,
-            "citizenship" => $priceData->citizenship ?: false,
-        ];
+        ]);
     }
 }

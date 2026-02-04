@@ -4,12 +4,11 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use App\Repositories\Contracts\FlightServiceRepositoryInterface;
-use App\Services\RouteSyncService;
-use App\Services\FlightProviders\NiraProvider;
 use Illuminate\Support\Facades\Log;
 use App\Services\FlightUpdateService;
 use App\Services\FlightCleanupService;
 use Illuminate\Support\Facades\Validator;
+use App\Enums\ServiceProviderEnum;
 
 
 class FlightUpdateController extends Controller
@@ -62,6 +61,7 @@ class FlightUpdateController extends Controller
         $results = [];
         $startTime = now();
 
+        $providerClass =ServiceProviderEnum::from($service)->getProvider();
         foreach ($airlines as $config) {
             $airlineResult = [
                 'airline' => $config['name'],
@@ -78,7 +78,7 @@ class FlightUpdateController extends Controller
             ];
 
             try {
-                $provider = new NiraProvider($config);
+                $provider = new $providerClass($config);
                 $updateService = new FlightUpdateService($provider, $config['code'], $service);
 
                 foreach ($priorities as $priority) {

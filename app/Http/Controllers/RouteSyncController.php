@@ -5,8 +5,8 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use App\Repositories\Contracts\FlightServiceRepositoryInterface;
 use App\Services\RouteSyncService;
-use App\Services\FlightProviders\NiraProvider;
 use Illuminate\Support\Facades\Log;
+use App\Enums\ServiceProviderEnum;
 
 class RouteSyncController extends Controller
 {
@@ -22,6 +22,7 @@ class RouteSyncController extends Controller
         $service = $request->input('service', 'nira'); 
         $iata = $request->input('iata'); 
 
+        $providerClass  = ServiceProviderEnum::from($service)->getProvider();
         $airlines = $iata
             ? [$this->repository->getServiceByCode($service, $iata)]
             : $this->repository->getActiveServices($service);
@@ -39,7 +40,8 @@ class RouteSyncController extends Controller
 
         foreach ($airlines as $airlineConfig) {
             try {
-                $provider = new NiraProvider($airlineConfig);
+                $provider = new $providerClass($airlineConfig);
+
                 $syncService = new RouteSyncService($provider, $airlineConfig['code'], $service);
 
                 $syncResult = $syncService->sync();

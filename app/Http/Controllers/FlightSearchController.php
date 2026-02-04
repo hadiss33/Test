@@ -2,189 +2,39 @@
 
 namespace App\Http\Controllers;
 
+use App\Enums\SnapTrip\CabinClassCode;
+use App\Enums\SnapTrip\DirectionInd;
 use App\Http\Resources\FlightResource;
+use App\Http\Resources\SnapFlightResource;
 use App\Models\Flight;
+use App\Repositories\Contracts\FlightServiceRepositoryInterface;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 
 class FlightSearchController extends Controller
 {
-    public function search(Request $request)
+    protected $repository;
+
+
+    public function __construct(FlightServiceRepositoryInterface $repository)
     {
-        $validator = Validator::make($request->all(), [
-            'origin' => 'required|string|size:3',
-            'destination' => 'required|string|size:3',
-            'date' => 'required|date|after_or_equal:today',
-            'airline' => 'nullable|string',
-            'class' => 'nullable|string',
-        ]);
-
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
-
-        $query = Flight::with(['route', 'classes.fareBreakdown', 'details'])
-            ->whereHas('route', function ($q) use ($request) {
-                $q->where('origin', $request->origin)
-                    ->where('destination', $request->destination);
-
-                if ($request->airline) {
-                    $q->where('iata', $request->airline);
-                }
-            })
-            ->whereDate('departure_datetime', $request->date)
-            ->upcoming()
-            ->orderBy('departure_datetime');
-
-        if ($request->class) {
-            $query->whereHas('classes', function ($q) use ($request) {
-                $q->where('class_code', $request->class)
-                    ->available();
-            });
-        }
-
-        $flights = $query->get()->map(function ($flight) use ($request) {
-            $classes = $flight->classes;
-
-            if ($request->class) {
-                $classes = $classes->where('class_code', $request->class);
-            }
-
-            return [
-                'id' => $flight->id,
-                'flight_number' => $flight->flight_number,
-                'airline' => $flight->route->iata,
-                'origin' => $flight->route->origin,
-                'destination' => $flight->route->destination,
-                'departure_datetime' => $flight->departure_datetime->toIso8601String(),
-                'arrival_datetime' => $flight->details?->arrival_datetime?->toIso8601String(),
-                'duration_minutes' => $flight->details?->flight_duration,
-                'aircraft_type' => $flight->aircraft_type,
-                'has_transit' => $flight->details?->has_transit ?? false,
-                'classes' => $classes->map(function ($class) {
-                    return [
-                        'code' => $class->class_code,
-                        'status' => $class->status,
-                        'available_seats' => $class->available_seats,
-                        'prices' => [
-                            'adult' => (float) $class->price_adult,
-                            'child' => (float) $class->price_child,
-                            'infant' => (float) $class->price_infant,
-                        ],
-                        'fare_breakdown' => $class->fareBreakdown->keyBy('passenger_type')->map(function ($fare) {
-                            return [
-                                'base_fare' => (float) $fare->base_fare,
-                                'taxes' => [
-                                    'i6' => (float) $fare->tax_i6,
-                                    'v0' => (float) $fare->tax_v0,
-                                    'hl' => (float) $fare->tax_hl,
-                                    'lp' => (float) $fare->tax_lp,
-                                ],
-                                'total' => (float) $fare->total_price,
-                            ];
-                        }),
-                    ];
-                }),
-            ];
-        });
-
-        return response()->json([
-            'status' => 'success',
-            'count' => $flights->count(),
-            'data' => $flights,
-        ]);
-    }
-
-    public function show($id)
-    {
-        $flight = Flight::with(['route', 'classes.fareBreakdown', 'details'])
-            ->find($id);
-
-        if (! $flight) {
-            return response()->json(['error' => 'Flight not found'], 404);
-        }
-
-        return response()->json([
-            'status' => 'success',
-            'data' => [
-                'id' => $flight->id,
-                'flight_number' => $flight->flight_number,
-                'airline' => [
-                    'iata' => $flight->route->iata,
-                    'name' => $this->getAirlineName($flight->route->iata),
-                ],
-                'route' => [
-                    'origin' => $flight->route->origin,
-                    'destination' => $flight->route->destination,
-                ],
-                'schedule' => [
-                    'departure' => $flight->departure_datetime->toIso8601String(),
-                    'arrival' => $flight->details?->arrival_datetime?->toIso8601String(),
-                    'duration_minutes' => $flight->details?->flight_duration,
-                ],
-                'aircraft' => [
-                    'type' => $flight->aircraft_type,
-                ],
-                'transit' => [
-                    'has_transit' => $flight->details?->has_transit ?? false,
-                    'city' => $flight->details?->transit_city,
-                ],
-                'FlightBaggage' => [
-                    'weight' => $flight->details?->baggage_weight,
-                    'pieces' => $flight->details?->baggage_pieces,
-                ],
-                'refund_rules' => $flight->details?->refund_rules,
-                'classes' => $flight->classes->map(function ($class) {
-                    return [
-                        'code' => $class->class_code,
-                        'status' => $class->status,
-                        'available_seats' => $class->available_seats,
-                        'is_available' => $class->isAvailable(),
-                        'prices' => [
-                            'adult' => (float) $class->price_adult,
-                            'child' => (float) $class->price_child,
-                            'infant' => (float) $class->price_infant,
-                        ],
-                        'fare_breakdown' => $class->fareBreakdown->keyBy('passenger_type'),
-                    ];
-                }),
-                'last_updated' => $flight->last_updated_at->toIso8601String(),
-            ],
-        ]);
-    }
-
-    protected function getAirlineName(string $iata): string
-    {
-        $airlines = [
-            'Y9' => 'کیش ایر', 'EP' => 'ایران ایر', 'FP' => 'فلای پرشیا',
-            'HH' => 'تابان', 'IV' => 'کاسپین', 'I3' => 'آتا',
-            'NV' => 'کارون', 'PA' => 'پارس ایر', 'ZV' => 'زاگرس',
-        ];
-
-        return $airlines[$iata] ?? $iata;
+        $this->repository = $repository;
     }
 
     public function getAdvancedFlights(Request $request)
     {
-
+        // تنظیم گزینه‌ها
         if (! $request->has('options')) {
-            $request->merge([
-                'options' => ['FareBreakdown', 'Baggage', 'Tax', 'Rule'],
-            ]);
-        }
-        elseif (is_string($request->input('options'))) {
-            $rawOptions = $request->input('options');
-            $cleanOptions = trim($rawOptions, '[]');
-
-            if (! empty($cleanOptions)) {
-                $optionsArray = array_map('trim', explode(',', $cleanOptions));
-                $request->merge(['options' => $optionsArray]);
-            } else {
-                $request->merge(['options' => []]);
-            }
+            $request->merge(['options' => ['FareBreakdown', 'Baggage', 'Tax', 'Rule']]);
+        } elseif (is_string($request->input('options'))) {
+            $cleanOptions = trim($request->input('options'), '[]');
+            $request->merge(['options' => ! empty($cleanOptions) ? array_map('trim', explode(',', $cleanOptions)) : []]);
         }
 
+        // اعتبارسنجی
         $validator = Validator::make($request->all(), [
             'datetime_start' => 'required|date',
             'datetime_end' => 'required|date|after_or_equal:datetime_start',
@@ -192,41 +42,289 @@ class FlightSearchController extends Controller
             'destination' => 'nullable|string|size:3',
             'airline' => 'nullable|string',
             'options' => 'nullable|array',
-            'options.*' => 'string',
+            'service' => 'nullable|string',
         ]);
 
         if ($validator->fails()) {
             return response()->json(['errors' => $validator->errors()], 422);
         }
 
-        $start = Carbon::parse($request->datetime_start);
-        $end = Carbon::parse($request->datetime_end);
-        $diff = $start->diffInDays($end);
-
-        if ($diff > 30) {
-            return response()->json(['error' => 'Trip duration cannot exceed 30 days.'], 422);
-        }
-
-        $relations = ['route', 'details', 'classes']; 
-
-        if ($request->has('options')) {
-            foreach ($request->options as $opt) {
-                if (isset(Flight::RELATION_MAP[$opt])) {
-                    $relations[] = Flight::RELATION_MAP[$opt];
-                }
-            }
-        }
-
-        $flights = Flight::query()
+        $relations = ['route.applicationInterface', 'details', 'classes'];
+        $dbFlights = Flight::query()
             ->with(array_unique($relations))
-            ->filter($request->only(['datetime_start', 'datetime_end', 'origin', 'destination', 'airline']))
+            ->filter($request->only(['datetime_start', 'datetime_end', 'origin', 'destination', 'airline', 'service']))
             ->orderBy('departure_datetime')
             ->get();
 
+        $dbData = FlightResource::collection($dbFlights)->resolve();
+
+        $externalData = [];
+        if (is_null($request->input('service')) || $request->input('service') === 'snapptrip_flight') {
+            try {
+                $rawResponse = $this->snapFlight($request);
+
+                if (! empty($rawResponse['pricedItineraries'])) {
+                    $externalData = SnapFlightResource::collection($rawResponse['pricedItineraries'])->resolve();
+                }
+
+            } catch (\Exception $e) {
+                Log::error('SnappTrip Error: '.$e->getMessage(), [
+                    'file' => $e->getFile(),
+                    'line' => $e->getLine(),
+                ]);
+                $externalData = [];
+            }
+        }
+        Log::info('data', ['dbData' => $dbData, 'externalData' => $externalData]);
+
+        $data = array_merge($dbData ?? [], $externalData ?? []);
+        Log::info('data', ['data' => $data]);
+
         return response()->json([
             'status' => 'success',
-            'count' => $flights->count(),
-            'data' => FlightResource::collection($flights),
+            'meta' => [
+                'total_count' => count($data),
+                'db_source_count' => $dbFlights->count(),
+                'external_source_count' => count($externalData),
+            ],
+            'data' => $data,
         ]);
+    }
+
+    public function snapFlight(Request $request): array
+    {
+        $service = $request->input('service') ?: 'snapptrip_flight';
+        $interface = $this->repository->getService($service);
+
+        $endpoint = rtrim($interface['url'], '/').'/api/v1/search';
+        $body = $this->buildSnapSearchRequest($request, CabinClassCode::Default);
+
+        Log::info('Sending request to SnappTrip', ['endpoint' => $endpoint, 'body' => $body]);
+
+        $response = Http::timeout(120)->connectTimeout(120)
+            ->post($endpoint, $body)
+            ->throw()
+            ->json();
+
+        Log::info('Received response from SnappTrip', ['response_count' => count($response)]);
+        Log::info(' SnappTrip', ['response' => $response]);
+
+        return $response;
+    }
+
+    protected function buildSnapSearchRequest(Request $request, CabinClassCode $cabin): array
+    {
+        return [
+            'searchRequest' => [
+                'adult' => 1,
+                'child' => 0,
+                'infant' => 0,
+                'isDomestic' => true,
+                'originDestinationInformations' => [[
+                    'departureDateTime' => Carbon::parse($request->datetime_start)->format('Y-m-d\TH:i:s'),
+                    'originLocationCode' => $request->origin,
+                    'destinationLocationCode' => $request->destination,
+                    'originType' => 2,
+                    'destinationType' => 2,
+                ]],
+                'travelPreference' => [
+                    'airTripType' => DirectionInd::OneWay->value,
+                    'cabinType' => 100,
+                    'maxStopsQuantity' => 0,
+                ],
+            ],
+        ];
+    }
+
+    public function snapTripFlight(Request $request)
+    {
+        Log::info('--- Mock Search Request Received ---');
+        Log::info('Payload:', $request->all());
+
+        $validator = Validator::make($request->all(), [
+            'searchRequest' => 'required|array',
+            'searchRequest.adult' => 'required|integer|min:1',
+            'searchRequest.child' => 'integer|min:0',
+            'searchRequest.infant' => 'integer|min:0',
+            'searchRequest.isDomestic' => 'boolean',
+
+            'searchRequest.originDestinationInformations' => 'required|array|min:1',
+            'searchRequest.originDestinationInformations.*.departureDateTime' => 'required|date',
+            'searchRequest.originDestinationInformations.*.originLocationCode' => 'required|string|size:3',
+            'searchRequest.originDestinationInformations.*.destinationLocationCode' => 'required|string|size:3',
+
+            'searchRequest.travelPreference' => 'required|array',
+            'searchRequest.travelPreference.cabinType' => 'required|integer',
+            'searchRequest.travelPreference.airTripType' => 'required|integer',
+        ]);
+
+        if ($validator->fails()) {
+            Log::warning('Validation Failed:', $validator->errors()->toArray());
+
+            return response()->json([
+                'success' => false,
+                'error' => [
+                    'code' => 'VALIDATION_ERROR',
+                    'message' => $validator->errors()->first(),
+                ],
+            ], 400);
+        }
+
+        $jsonPath = storage_path('app/public/flghts.json');
+
+        if (! file_exists($jsonPath)) {
+            Log::critical("Mock Data File Not Found at: $jsonPath");
+
+            return response()->json([
+                'success' => false,
+                'error' => ['message' => 'Internal Server Error: Mock data missing'],
+            ], 500);
+        }
+
+        $jsonContent = file_get_contents($jsonPath);
+        $data = json_decode($jsonContent, true);
+
+        if (! $data || ! isset($data['pricedItineraries'])) {
+            Log::error("Invalid JSON format or missing 'pricedItineraries' key.");
+
+            return response()->json([
+                'success' => false,
+                'error' => ['message' => 'Internal Server Error: Invalid Mock Data'],
+            ], 500);
+        }
+
+        // 👇 بدون فیلتر، کل دیتا به صورت Collection
+        $pricedItineraries = collect($data['pricedItineraries'])->values();
+
+        Log::info('Total flights count: '.$pricedItineraries->count());
+
+        return response()->json([
+            'success' => true,
+            'searchId' => rand(100000, 999999),
+            'pricedItineraries' => $pricedItineraries,
+            'error' => null,
+        ]);
+    }
+
+    public function snapTripFlightBook(Request $request)
+    {
+        Log::info('--- Mock Book Request ---', $request->all());
+
+        $validator = Validator::make($request->all(), [
+            'fareSourceCode' => 'required|string',
+            'phoneNumber' => 'required|string',
+            'email' => 'required|email',
+            'passengers' => 'required|array|min:1',
+
+            'passengers.*.firstName' => 'required|string',
+            'passengers.*.lastName' => 'required|string',
+            'passengers.*.gender' => 'required|in:MALE,FEMALE',
+            'passengers.*.birthday' => 'required|date',
+            'passengers.*.passengerType' => 'required|in:ADULT,CHILD,INFANT',
+            'passengers.*.nationalityCode' => 'required|string|size:2',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'error' => [
+                    'code' => 'VALIDATION_ERROR',
+                    'message' => $validator->errors()->first(),
+                ],
+            ], 400);
+        }
+
+        $flightsPath = storage_path('app/public/flghts.json');
+        $flights = collect(json_decode(file_get_contents($flightsPath), true)['pricedItineraries']);
+
+        $flight = $flights->firstWhere('fareSourceCode', $request->fareSourceCode);
+
+        if (! $flight) {
+            return response()->json([
+                'success' => false,
+                'error' => [
+                    'code' => 'SOLUTION_EXPIRED',
+                    'message' => 'Solution is no longer available',
+                ],
+            ], 410);
+        }
+
+        $bookId = 'BOOK-'.md5($request->fareSourceCode.now()->timestamp);
+
+        $totalFare = $flight['airItineraryPricingInfo']['itinTotalFare']['totalFare'];
+        $currency = $flight['airItineraryPricingInfo']['itinTotalFare']['currency'];
+
+        $bookingPath = storage_path('app/public/bookings.json');
+        $bookings = file_exists($bookingPath)
+            ? json_decode(file_get_contents($bookingPath), true)
+            : [];
+
+        $bookings[$bookId] = [
+            'fareSourceCode' => $request->fareSourceCode,
+            'status' => 'BOOKED',
+            'paymentAmount' => $totalFare,
+            'currency' => $currency,
+            'passengers' => $request->passengers,
+            'createdAt' => now()->toDateTimeString(),
+        ];
+
+        file_put_contents($bookingPath, json_encode($bookings, JSON_PRETTY_PRINT));
+
+        return response()->json([
+            'trackingCode' => 'TRK-'.rand(100000, 999999),
+            'checkoutUrl' => $bookId,
+            'bookId' => $bookId,
+            'paymentCurrency' => $currency,
+            'paymentAmount' => $totalFare,
+        ]);
+    }
+
+    public function snapTripFlightIssue(Request $request)
+    {
+        // 1. بررسی دقیق ورودی طبق داکیومنت
+        $validator = Validator::make($request->all(), [
+            'bookId' => 'required|string',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => 'FAILED', // یا ساختار خطای استاندارد اسنپ
+                'error' => [
+                    'code' => 'VALIDATION_ERROR',
+                    'message' => $validator->errors()->first(),
+                ],
+            ], 400);
+        }
+
+        // 2. لاجیک نمونه (Mock Logic)
+        // ما اینجا فرض می‌کنیم هر bookId که بیاید معتبر است تا تست ERP پاس شود.
+        // اعداد رندوم تولید می‌کنیم تا فاکتور ERP واقعی به نظر برسد.
+
+        $mockPnr = 'MOCK-'.strtoupper(substr(md5(microtime()), 0, 5));
+        $mockTicketNumber = '999-'.rand(1000000000, 9999999999);
+
+        // (اختیاری) اگر می‌خواهی وضعیت فایل را هم آپدیت کنی که بعداً در inquiry ببینی:
+        $bookingPath = storage_path('app/public/bookings.json');
+        if (file_exists($bookingPath)) {
+            $bookings = json_decode(file_get_contents($bookingPath), true);
+            if (isset($bookings[$request->bookId])) {
+                $bookings[$request->bookId]['status'] = 'ISSUED'; // وضعیت داخلی ماک
+                $bookings[$request->bookId]['pnr'] = $mockPnr;
+                $bookings[$request->bookId]['ticketNumber'] = $mockTicketNumber;
+                file_put_contents($bookingPath, json_encode($bookings, JSON_PRETTY_PRINT));
+            }
+        }
+
+        // 3. خروجی دقیق طبق داکیومنت و نیاز ERP
+        // نکته مهم: کلمه کلیدی SUCCEED باید دقیقاً همین باشد.
+        return response()->json([
+            'status' => 'SUCCEED',
+            // اسنپ در داکیومنت اصلی Issue، معمولاً فقط status برمی‌گرداند،
+            // اما برخی پرووایدرها در پاسخ Issue اطلاعات بلیط را هم می‌دهند.
+            // ما اینجا اطلاعات را می‌فرستیم که اگر ERP نیاز داشت استفاده کند.
+            'pnr' => $mockPnr,
+            'ticketNumber' => $mockTicketNumber,
+            'trackingCode' => $request->bookId,
+        ], 200);
     }
 }

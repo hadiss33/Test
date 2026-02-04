@@ -8,5 +8,7 @@ interface FlightServiceRepositoryInterface
 
     public function getServiceByCode(string $serviceName, string $code): ?array;
 
+    public function getService(string $serviceName): ?array;
+
     public function isServiceActive(string $serviceName, string $code): bool;
 }

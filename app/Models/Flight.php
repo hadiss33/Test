@@ -119,8 +119,7 @@ class Flight extends Model
         if (! empty($filters['datetime_start']) && ! empty($filters['datetime_end'])) {
             $query->whereDate('departure_datetime', '>=', $filters['datetime_start'])
                 ->whereDate('departure_datetime', '<=', $filters['datetime_end']);
-        }
-        elseif (! empty($filters['datetime_start'])) {
+        } elseif (! empty($filters['datetime_start'])) {
             $query->whereDate('departure_datetime', '>=', $filters['datetime_start']);
         }
 
@@ -135,6 +134,11 @@ class Flight extends Model
                 if (! empty($filters['airline'])) {
                     $q->where('iata', $filters['airline']);
                 }
+            });
+        }
+        if (! empty($filters['service'])) {
+            $query->whereHas('route.applicationInterface', function ($q) use ($filters) {
+                $q->where('service', $filters['service']);
             });
         }
 
