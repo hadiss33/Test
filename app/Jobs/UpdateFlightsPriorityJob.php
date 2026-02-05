@@ -7,6 +7,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\{InteractsWithQueue, SerializesModels};
 use Illuminate\Support\Facades\Log;
+use App\Enums\ServiceProviderEnum;
 
 class UpdateFlightsPriorityJob implements ShouldQueue
 {
@@ -37,20 +38,30 @@ class UpdateFlightsPriorityJob implements ShouldQueue
 
         $airlines = array_filter($airlines);
 
+        // ✅ Get service-specific classes
+        $serviceEnum = ServiceProviderEnum::from($this->service);
+        $providerClass = $serviceEnum->getProvider();
+        $updaterClass = $serviceEnum->getUpdater(); // ← جدید
+
         foreach ($airlines as $config) {
             try {
-                Log::info("Starting priority {$this->priority} update for {$config['code']}");
+                Log::info("Starting priority {$this->priority} update for {$config['code']}", [
+                    'service' => $this->service
+                ]);
                 
-                $provider = new \App\Services\FlightProviders\NiraProvider($config);
-                $updateService = new \App\Services\FlightUpdateService($provider, $config['code'], $this->service);
+                $provider = new $providerClass($config);
                 
-                $stats = $updateService->updateByPeriod($this->priority);
+                // ✅ Use Updater instead of FlightUpdateService
+                $updater = new $updaterClass($provider, $config['code'] ?? null, $this->service);
+                
+                $stats = $updater->updateByPeriod($this->priority);
                 
                 Log::info("Priority {$this->priority} update completed for {$config['code']}", $stats);
                 
             } catch (\Exception $e) {
                 Log::error("Priority update failed for {$config['code']}: " . $e->getMessage(), [
                     'priority' => $this->priority,
+                    'service' => $this->service,
                     'trace' => $e->getTraceAsString()
                 ]);
             }

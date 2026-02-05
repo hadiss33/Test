@@ -5,11 +5,9 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use App\Repositories\Contracts\FlightServiceRepositoryInterface;
 use Illuminate\Support\Facades\Log;
-use App\Services\FlightUpdateService;
 use App\Services\FlightCleanupService;
 use Illuminate\Support\Facades\Validator;
 use App\Enums\ServiceProviderEnum;
-
 
 class FlightUpdateController extends Controller
 {
@@ -43,6 +41,10 @@ class FlightUpdateController extends Controller
         $airlineCode = $request->input('airline');
         $priorityInput = $request->input('period');
 
+        $serviceEnum = ServiceProviderEnum::from($service);
+        $providerClass = $serviceEnum->getProvider();
+        $updaterClass = $serviceEnum->getUpdater(); // ✅ جدید
+
         $airlines = $airlineCode
             ? [$this->repository->getServiceByCode($service, $airlineCode)]
             : $this->repository->getActiveServices($service);
@@ -56,15 +58,14 @@ class FlightUpdateController extends Controller
             ], 404);
         }
 
-        $priorities = $priorityInput ? [$priorityInput] : [3, 7,60 ,90, 120];
+        $priorities = $priorityInput ? [$priorityInput] : [3, 7, 60, 90, 120];
 
         $results = [];
         $startTime = now();
 
-        $providerClass =ServiceProviderEnum::from($service)->getProvider();
         foreach ($airlines as $config) {
             $airlineResult = [
-                'airline' => $config['name'],
+                'airline' => $config['name'] ?? 'Unknown',
                 'iata' => $config['code'] ?? null,
                 'priorities' => [],
                 'total_stats' => [
@@ -73,38 +74,46 @@ class FlightUpdateController extends Controller
                     'skipped' => 0,
                     'errors' => 0,
                     'routes_processed' => 0,
-                    'flights_found' => 0
+                    'flights_found' => 0,
+                    'jobs_dispatched' => 0,
                 ]
             ];
 
             try {
                 $provider = new $providerClass($config);
-                $updateService = new FlightUpdateService($provider, $config['code'], $service);
+                
+                $updater = new $updaterClass($provider, $config['code'] ?? null, $service);
 
                 foreach ($priorities as $priority) {
-                    Log::info("Starting update for {$config['code']} - Priority {$priority}");
+                    Log::info("Starting {$service} update - Priority {$priority}", [
+                        'airline' => $config['code'] ?? 'N/A',
+                    ]);
                     
                     $priorityStartTime = microtime(true);
-                    $stats = $updateService->updateByPeriod($priority);
+                    
+                    $stats = $updater->updateByPeriod($priority);
+                    
                     $priorityDuration = round(microtime(true) - $priorityStartTime, 2);
 
                     $airlineResult['priorities'][$priority] = array_merge($stats, [
                         'duration_seconds' => $priorityDuration
                     ]);
 
+                    // Aggregate stats
                     foreach ($stats as $key => $value) {
                         if (isset($airlineResult['total_stats'][$key])) {
                             $airlineResult['total_stats'][$key] += $value;
                         }
                     }
 
-                    Log::info("Completed update for {$config['code']} - Priority {$priority}", $stats);
+                    Log::info("Completed {$service} update - Priority {$priority}", $stats);
                 }
 
                 $airlineResult['status'] = 'success';
 
             } catch (\Exception $e) {
                 Log::error("Flight update error for {$config['code']}: " . $e->getMessage(), [
+                    'service' => $service,
                     'trace' => $e->getTraceAsString()
                 ]);
                 
@@ -119,6 +128,7 @@ class FlightUpdateController extends Controller
 
         return response()->json([
             'status' => 'completed',
+            'service' => $service,
             'execution_time_seconds' => $totalDuration,
             'airlines_processed' => count($airlines),
             'priorities_processed' => $priorities,
@@ -136,6 +146,7 @@ class FlightUpdateController extends Controller
             'total_errors' => 0,
             'total_routes' => 0,
             'total_flights' => 0,
+            'total_jobs' => 0,
             'success_airlines' => 0,
             'failed_airlines' => 0
         ];
@@ -148,6 +159,7 @@ class FlightUpdateController extends Controller
                 $summary['total_errors'] += $result['total_stats']['errors'] ?? 0;
                 $summary['total_routes'] += $result['total_stats']['routes_processed'] ?? 0;
                 $summary['total_flights'] += $result['total_stats']['flights_found'] ?? 0;
+                $summary['total_jobs'] += $result['total_stats']['jobs_dispatched'] ?? 0;
             }
 
             if (isset($result['status'])) {

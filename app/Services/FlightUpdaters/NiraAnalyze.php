@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Services\FlightAnalyze;
+namespace App\Services\FlightUpdaters;
 
 use Carbon\Carbon;
 

@@ -19,4 +19,7 @@ interface FlightProviderInterface
     
     public function prepareAvailabilityRequestData(string $origin, string $destination, string $date): array;
 
+    public function getCharterFlights(string $fromDate, string $toDate): array;
+
+
 }

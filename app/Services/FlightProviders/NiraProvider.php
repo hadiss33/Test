@@ -249,4 +249,8 @@ class NiraProvider implements FlightProviderInterface
             ]
         ];
     }
+    public function getCharterFlights(string $fromDate, string $toDate): array
+    {
+        return [];
+    }
 }
