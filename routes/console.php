@@ -1,5 +1,4 @@
 <?php
-
 use Illuminate\Support\Facades\Schedule;
 use App\Jobs\{
     CleanupOldFlightsJob,
@@ -8,18 +7,21 @@ use App\Jobs\{
     SyncAirlineRoutesJob
 };
 
+$airlines = ['nira', 'sepehr' , 'ravis'];
 
-Schedule::job(new SyncAirlineRoutesJob('nira'))
-    ->dailyAt('00:00')
-    ->name('sync-airline-routes')
-    ->withoutOverlapping()
-    ->onOneServer();
+/*
+|--------------------------------------------------------------------------
+| Sync airline routes
+|--------------------------------------------------------------------------
+*/
+foreach ($airlines as $airline) {
+    Schedule::job(new SyncAirlineRoutesJob($airline))
+        ->dailyAt('00:00')
+        ->name("sync-airline-routes:$airline")
+        ->withoutOverlapping()
+        ->onOneServer();
+}
 
-    Schedule::job(new SyncAirlineRoutesJob('sepehr'))
-    ->dailyAt('00:00')
-    ->name('sync-airline-routes')
-    ->withoutOverlapping()
-    ->onOneServer();
 
 Schedule::job(new CleanupOldFlightsJob)
     ->dailyAt('01:00')
@@ -33,74 +35,22 @@ Schedule::job(new CheckMissingFlightsJob)
     ->withoutOverlapping()
     ->onOneServer();
 
-Schedule::job(new UpdateFlightsPriorityJob(3, 'nira'))
-    ->everyTwoMinutes()
-    ->name('update-flights-period-3')
-    ->withoutOverlapping()
-    ->onOneServer();
 
-    Schedule::job(new UpdateFlightsPriorityJob(3, 'sepehr'))
-    ->everyTwoMinutes()
-    ->name('update-flights-period-3')
-    ->withoutOverlapping()
-    ->onOneServer();
+$periods = [
+    3  => 'everyTwoMinutes',
+    7  => 'everyFiveMinutes',
+    30 => 'everyFifteenMinutes',
+    60 => 'everyThirtyMinutes',
+    90 => 'hourly',
+    120 => 'everyThreeHours',
+];
 
-Schedule::job(new UpdateFlightsPriorityJob(7, 'nira'))
-    ->everyFiveMinutes()
-    ->name('update-flights-period-7')
-    ->withoutOverlapping()
-    ->onOneServer();
-
-    Schedule::job(new UpdateFlightsPriorityJob(7, 'sepehr'))
-    ->everyFiveMinutes()
-    ->name('update-flights-period-7')
-    ->withoutOverlapping()
-    ->onOneServer();
-
-Schedule::job(new UpdateFlightsPriorityJob(30, 'nira'))
-    ->everyFifteenMinutes()
-    ->name('update-flights-period-30')
-    ->withoutOverlapping()
-    ->onOneServer();
-
-    Schedule::job(new UpdateFlightsPriorityJob(30, 'sepehr'))
-    ->everyFifteenMinutes()
-    ->name('update-flights-period-30')
-    ->withoutOverlapping()
-    ->onOneServer();
-
-Schedule::job(new UpdateFlightsPriorityJob(60, 'nira'))
-    ->everyThirtyMinutes()
-    ->name('update-flights-period-60')
-    ->withoutOverlapping()
-    ->onOneServer();
-
-    Schedule::job(new UpdateFlightsPriorityJob(60, 'sepehr'))
-    ->everyThirtyMinutes()
-    ->name('update-flights-period-60')
-    ->withoutOverlapping()
-    ->onOneServer();
-
-Schedule::job(new UpdateFlightsPriorityJob(90, 'nira'))
-    ->hourly()
-    ->name('update-flights-period-90')
-    ->withoutOverlapping()
-    ->onOneServer();
-
-Schedule::job(new UpdateFlightsPriorityJob(90, 'sepehr'))
-    ->hourly()
-    ->name('update-flights-period-90')
-    ->withoutOverlapping()
-    ->onOneServer();
-
-Schedule::job(new UpdateFlightsPriorityJob(120, 'nira'))
-    ->everyThreeHours()
-    ->name('update-flights-period-120')
-    ->withoutOverlapping()
-    ->onOneServer();
-
-    Schedule::job(new UpdateFlightsPriorityJob(120, 'sepehr'))
-    ->everyThreeHours()
-    ->name('update-flights-period-120')
-    ->withoutOverlapping()
-    ->onOneServer();
+foreach ($airlines as $airline) {
+    foreach ($periods as $period => $frequency) {
+        Schedule::job(new UpdateFlightsPriorityJob($period, $airline))
+            ->{$frequency}()
+            ->name("update-flights:$airline:$period")
+            ->withoutOverlapping()
+            ->onOneServer();
+    }
+}

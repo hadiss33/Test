@@ -2,7 +2,7 @@
 
 namespace App\Enums;
 use App\Services\FlightProviders\{NiraProvider , SepehrProvider , RavisProvider};
-use App\Services\FlightUpdaters\{NiraAnalyze , SepehrAnalyze , NiraFlightUpdater , SepehrFlightUpdater , RavisFlightUpdater};
+use App\Services\FlightUpdaters\{NiraAnalyze , SepehrAnalyze , NiraFlightUpdater , SepehrFlightUpdater , RavisFlightUpdater , RavisAnalyze};
 
 
 enum ServiceProviderEnum: string
@@ -25,6 +25,7 @@ enum ServiceProviderEnum: string
         return match ($this) {
             self::Nira => NiraAnalyze::class,
             self::Sepehr => SepehrAnalyze::class,
+            self::Ravis => RavisAnalyze::class,
         };
     }
 

@@ -22,7 +22,7 @@ class FlightServiceRepository implements FlightServiceRepositoryInterface
                 ->active()
                 ->byType('api')
                 ->byService($serviceName)
-                ->where('url', 'https://sepehrapitest.ir')
+                // ->where('url', 'https://sepehrapitest.ir')
                 ->get()
                 ->map(fn ($item) => $this->transformToConfig($item, $serviceName))
 
@@ -91,6 +91,7 @@ class FlightServiceRepository implements FlightServiceRepositoryInterface
             'url' => $item->url,
             'username' => $item->username,
             'password' => $item->password,
+             'data' => $data,
             'service' => $serviceName,
         ];
     }

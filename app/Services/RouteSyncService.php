@@ -95,7 +95,8 @@ class RouteSyncService
                     'sunday' => $routeData['sunday'],
                 ]
             );
-            }catch (\Exception $e){dd($e);
+            }catch (\Exception $e){
+                dd($e);
                 Log::error("Error saving route: " . $e->getMessage());
             }
 
