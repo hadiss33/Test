@@ -6,7 +6,7 @@ use Carbon\Carbon;
 
 class NiraAnalyze
 {
-    public function adaptFlightsToRoutes(array $flights, ?int $id, ?string $iata): array
+    public function adaptFlightsToRoutes(array $flights, ?int $id): array
     {
         $routes = [];
 
@@ -16,7 +16,7 @@ class NiraAnalyze
             $date = Carbon::parse($flight['DepartureDateTime']);
             $dayName = strtolower($date->englishDayOfWeek);
 
-            $key = ($iata ?? '').":{$origin}-{$destination}";
+            $key = ($id ?? '').":{$origin}-{$destination}";
 
             if (! isset($routes[$key])) {
                 $routes[$key] = [

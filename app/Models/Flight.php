@@ -13,11 +13,14 @@ class Flight extends Model
     const CREATED_AT = null;
 
     protected $fillable = [
+        'iata',
         'airline_active_route_id',
         'flight_number',
         'departure_datetime',
         'missing_count',
         'updated_at',
+        'api_request_at',
+        'db_saved_at',
     ];
 
     protected $casts = [
@@ -103,6 +106,11 @@ class Flight extends Model
     public function scopeMissing($query)
     {
         return $query->where('missing_count', '>', 0);
+    }
+
+    public function scopeForAirline($query, string $iata)
+    {
+        return $query->where('iata', $iata);
     }
 
     public const RELATION_MAP = [

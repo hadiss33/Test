@@ -7,7 +7,7 @@ use Carbon\Carbon;
 class RavisAnalyze
 {
 
-    public function adaptFlightsToRoutes(array $flights, ?int $id, ?string $iata): array
+    public function adaptFlightsToRoutes(array $flights, ?int $id): array
     {
         $routes = [];
 
@@ -27,11 +27,10 @@ class RavisAnalyze
                 continue; 
             }
 
-            $key = "{$airlineCode}:{$origin}-{$destination}";
+            $key = "{$id}:{$origin}-{$destination}";
 
             if (!isset($routes[$key])) {
                 $routes[$key] = [
-                    'iata' => $airlineCode, 
                     'origin' => $origin,
                     'destination' => $destination,
                     'application_interfaces_id' => $id ?? null,

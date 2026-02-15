@@ -12,7 +12,6 @@ class AirlineActiveRoute extends Model
     const CREATED_AT = null;
 
     protected $fillable = [
-        'iata',
         'origin',
         'destination',
         'application_interfaces_id',
@@ -53,10 +52,7 @@ class AirlineActiveRoute extends Model
     //     return $query->where('service', $service);
     // }
 
-    public function scopeForAirline($query, string $iata)
-    {
-        return $query->where('iata', $iata);
-    }
+
 
     public function scopeActive($query)
     {

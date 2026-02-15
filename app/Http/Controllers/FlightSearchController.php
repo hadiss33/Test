@@ -18,15 +18,14 @@ class FlightSearchController extends Controller
 {
     protected $repository;
 
-
     public function __construct(FlightServiceRepositoryInterface $repository)
     {
         $this->repository = $repository;
     }
 
+
     public function getAdvancedFlights(Request $request)
     {
-        // تنظیم گزینه‌ها
         if (! $request->has('options')) {
             $request->merge(['options' => ['FareBreakdown', 'Baggage', 'Tax', 'Rule']]);
         } elseif (is_string($request->input('options'))) {
@@ -34,13 +33,13 @@ class FlightSearchController extends Controller
             $request->merge(['options' => ! empty($cleanOptions) ? array_map('trim', explode(',', $cleanOptions)) : []]);
         }
 
-        // اعتبارسنجی
         $validator = Validator::make($request->all(), [
             'datetime_start' => 'required|date',
-            'datetime_end' => 'required|date|after_or_equal:datetime_start',
+            'datetime_end' => 'nullable|date|after_or_equal:datetime_start',
             'origin' => 'nullable|string|size:3',
             'destination' => 'nullable|string|size:3',
             'airline' => 'nullable|string',
+            'return' => 'nullable|boolean',
             'options' => 'nullable|array',
             'service' => 'nullable|string',
         ]);
@@ -49,36 +48,67 @@ class FlightSearchController extends Controller
             return response()->json(['errors' => $validator->errors()], 422);
         }
 
-        $relations = ['route.applicationInterface', 'details', 'classes'];
-        $dbFlights = Flight::query()
-            ->with(array_unique($relations))
-            ->filter($request->only(['datetime_start', 'datetime_end', 'origin', 'destination', 'airline', 'service']))
-            ->orderBy('departure_datetime')
-            ->get();
+        $relations = [
+            'route.applicationInterface',
+            'details',
+            'classes.rules',
+            'classes.fareBaggage',
+            'classes.taxes',
+            'classes.fareBreakdown',
+        ];
 
+        $query = Flight::query()->with(array_unique($relations));
+
+        if ($request->filled('datetime_end')) {
+            $query->whereDate('departure_datetime', '>=', $request->datetime_start)
+                ->whereDate('departure_datetime', '<=', $request->datetime_end);
+        } else {
+            $query->whereDate('departure_datetime', $request->datetime_start);
+        }
+
+        $origin = $request->origin;
+        $dest = $request->destination;
+        $isReturn = $request->boolean('return');
+
+        if ($origin || $dest) {
+            $query->whereHas('route', function ($q) use ($origin, $dest, $isReturn) {
+                if ($isReturn && $origin && $dest) {
+                    $q->where(function ($subQ) use ($origin, $dest) {
+                        $subQ->where('origin', $origin)
+                            ->where('destination', $dest);
+                    })->orWhere(function ($subQ) use ($origin, $dest) {
+                        $subQ->where('origin', $dest)
+                            ->where('destination', $origin);
+                    });
+                } else {
+                    if ($origin) {
+                        $q->where('origin', $origin);
+                    }
+                    if ($dest) {
+                        $q->where('destination', $dest);
+                    }
+                }
+            });
+        }
+
+        $query->filter($request->only(['airline', 'service']));
+
+        $dbFlights = $query->orderBy('departure_datetime')->get();
         $dbData = FlightResource::collection($dbFlights)->resolve();
 
         $externalData = [];
-        if (is_null($request->input('service')) || $request->input('service') === 'snapptrip_flight') {
-            try {
-                $rawResponse = $this->snapFlight($request);
-
-                if (! empty($rawResponse['pricedItineraries'])) {
-                    $externalData = SnapFlightResource::collection($rawResponse['pricedItineraries'])->resolve();
-                }
-
-            } catch (\Exception $e) {
-                Log::error('SnappTrip Error: '.$e->getMessage(), [
-                    'file' => $e->getFile(),
-                    'line' => $e->getLine(),
-                ]);
-                $externalData = [];
-            }
-        }
-        Log::info('data', ['dbData' => $dbData, 'externalData' => $externalData]);
+        // if (is_null($request->input('service')) || $request->input('service') === 'snapptrip_flight') {
+        //     try {
+        //         $rawResponse = $this->snapFlight($request);
+        //         if (! empty($rawResponse['pricedItineraries'])) {
+        //             $externalData = SnapFlightResource::collection($rawResponse['pricedItineraries'])->resolve();
+        //         }
+        //     } catch (\Exception $e) {
+        //         Log::error('SnappTrip Error: '.$e->getMessage());
+        //     }
+        // }
 
         $data = array_merge($dbData ?? [], $externalData ?? []);
-        Log::info('data', ['data' => $data]);
 
         return response()->json([
             'status' => 'success',
@@ -86,6 +116,7 @@ class FlightSearchController extends Controller
                 'total_count' => count($data),
                 'db_source_count' => $dbFlights->count(),
                 'external_source_count' => count($externalData),
+                'return_search' => $isReturn,
             ],
             'data' => $data,
         ]);

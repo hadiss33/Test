@@ -49,10 +49,9 @@ class NiraFlightUpdater implements FlightUpdaterInterface
         ];
 
         $fullConfig = $this->provider->getConfig();
-
-        $routes = AirlineActiveRoute::where('iata', $this->iata)
-            ->where('application_interfaces_id', $fullConfig['id'] ?? null)
-            ->get();
+        $routes = AirlineActiveRoute::where('application_interfaces_id', $fullConfig['id'] ?? null)
+          ->with('applicationInterface') 
+         ->get(); 
 
         if ($routes->isEmpty()) {
             Log::warning("No routes found for airline {$this->iata}");
@@ -98,9 +97,16 @@ class NiraFlightUpdater implements FlightUpdaterInterface
 
     protected function processBatchRequests(array $tasks, array &$stats): void
     {
+    
         $chunks = array_chunk($tasks, 5);
 
         foreach ($chunks as $chunk) {
+
+            $chunkStartTime = microtime(true);
+            foreach ($chunk as &$taskRef) {
+                $taskRef['start_microtime'] = $chunkStartTime;
+            }
+            unset($taskRef);
             try {
                 $responses = Http::timeout(60)
                     ->withoutVerifying()
@@ -114,8 +120,9 @@ class NiraFlightUpdater implements FlightUpdaterInterface
                 foreach ($responses as $index => $response) {
                     $task = $chunk[$index];
 
-                    if ($response instanceof \Illuminate\Http\Client\Response) {
+                    $startTime = $task['start_microtime'] ?? microtime(true);
 
+                    if ($response instanceof \Illuminate\Http\Client\Response) {
                         if ($response->successful()) {
                             $flights = $response->json()['AvailableFlights'] ?? [];
 
@@ -123,10 +130,11 @@ class NiraFlightUpdater implements FlightUpdaterInterface
                                 continue;
                             }
 
+
                             $stats['flights_found'] += count($flights);
 
                             foreach ($flights as $flightData) {
-                                $this->saveFlight($task['route'], $flightData, $task['date'], $stats);
+                                $this->saveFlight($task['route'], $flightData, $task['date'], $stats, $startTime);
                             }
                         } else {
                             $stats['errors']++;
@@ -135,13 +143,11 @@ class NiraFlightUpdater implements FlightUpdaterInterface
                                 'status' => $response->status(),
                             ]);
                         }
-
                     } else {
-
                         $stats['errors']++;
-                        Log::error('Nira API connection error (Timeout/DNS)', [
+                        Log::error('Nira API connection error', [
                             'route' => "{$task['route']->origin}-{$task['route']->destination}",
-                            'error_msg' => $response instanceof \Throwable ? $response->getMessage() : 'Unknown error',
+                            'error' => $response instanceof \Throwable ? $response->getMessage() : 'Unknown',
                         ]);
                     }
                 }
@@ -149,28 +155,30 @@ class NiraFlightUpdater implements FlightUpdaterInterface
                 sleep(1);
 
             } catch (\Exception $e) {
-                $stats['errors']++;
-                Log::error('Nira batch processing error: '.$e->getMessage());
+                Log::error('Batch processing fatal error: '.$e->getMessage());
             }
         }
     }
 
-    protected function saveFlight($route, array $flightData, Carbon $date, array &$stats): void
+    protected function saveFlight($route, array $flightData, Carbon $date, array &$stats, $startTime): void
     {
         DB::beginTransaction();
-
+        $iata = $route->applicationInterface->data['iata']?? $this->iata;
         try {
             $departureDateTime = Carbon::parse($flightData['DepartureDateTime']);
-
+            $endTime = microtime(true);
             $flight = Flight::updateOrCreate(
                 [
                     'airline_active_route_id' => $route->id,
                     'flight_number' => $flightData['FlightNo'],
                     'departure_datetime' => $departureDateTime,
+                    'iata' => $iata,
                 ],
                 [
                     'updated_at' => now(),
                     'missing_count' => 0,
+                    'api_request_at' => $startTime,
+                    'db_saved_at' => $endTime,
                 ]
             );
 

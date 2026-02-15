@@ -147,6 +147,7 @@ class RavisFlightUpdater implements FlightUpdaterInterface
                     'airline_active_route_id' => $route->id,
                     'flight_number' => $flightData['FlightNo'],
                     'departure_datetime' => $departureDateTime,
+                    'iata'=> $flightData['AirlineCode']
                 ],
                 [
                     'updated_at' => now(),

@@ -1,0 +1,7 @@
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+MAILTO=""
+
+* * * * * www-data cd /var/www/html && php artisan schedule:run >> /var/log/cron-service-cache.log 2>&1
+
+

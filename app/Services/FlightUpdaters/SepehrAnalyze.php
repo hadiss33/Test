@@ -6,7 +6,7 @@ use Carbon\Carbon;
 
 class SepehrAnalyze
 {
-    public function adaptFlightsToRoutes(array $flights, ?int $id, ?string $iata): array
+    public function adaptFlightsToRoutes(array $flights, ?int $id): array
     {
 
         
@@ -15,7 +15,7 @@ class SepehrAnalyze
             $origin = $flight['OriginIataCode'];
             $destination = $flight['DestinationIataCode'];
 
-            $key = ($iata ?? '').":{$origin}-{$destination}";
+            $key = ($id ?? '').":{$origin}-{$destination}";
 
             if (! isset($routes[$key])) {
                 $routes[$key] = [

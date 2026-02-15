@@ -56,14 +56,9 @@ class SepehrFlightUpdater implements FlightUpdaterInterface
 
         $fullConfig = $this->provider->getConfig();
 
-        // Get all active routes for this Sepehr instance
         $query = AirlineActiveRoute::where('application_interfaces_id', $fullConfig['id'] ?? null);
 
-        if ($this->iata) {
-            $query->where('iata', $this->iata);
-        } else {
-            $query->whereNull('iata'); // Sepehr has no IATA
-        }
+
 
         $routes = $query->get();
 
@@ -144,6 +139,7 @@ class SepehrFlightUpdater implements FlightUpdaterInterface
                     'airline_active_route_id' => $route->id,
                     'flight_number' => $flightData['FlightNumber'],
                     'departure_datetime' => $departureDateTime,
+                    'iata'=>  $flightData['Airline'],
                 ],
                 [
                     'updated_at' => now(),

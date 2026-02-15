@@ -15,6 +15,7 @@ class FlightResource extends JsonResource
     public function toArray(Request $request): array
     {
         $options = $request->input('options', []);
+        $serviceName = $this->route->applicationInterface->service ?? 'system';
         
         return [
             'charter_id' => $this->id ?? false,
@@ -26,6 +27,7 @@ class FlightResource extends JsonResource
             'details' => $this->formatDetails(),
             'items' => $this->formatItems($options),
             'description' => $this->formatDescription(),
+            'service_name' => $serviceName,
         ];
     }
 
@@ -33,15 +35,15 @@ class FlightResource extends JsonResource
     protected function formatDetails(): array
     {
         return [
-            // 'airline' => [
-            //     'iata' => $this->route->iata ?? '',
-            //     'icao' => $this->getAirlineIcao(),
-            //     'logo' => $this->getAirlineLogo(),
-            //     'title' => [
-            //         'en' => $this->getAirlineNameEn(),
-            //         'fa' => $this->getAirlineNameFa(),
-            //     ],
-            // ],
+            'airline' => [
+                'iata' => $this->iata ?? '',
+                'icao' => $this->getAirlineIcao(),
+                'logo' => $this->getAirlineLogo(),
+                'title' => [
+                    'en' => $this->getAirlineNameEn(),
+                    'fa' => $this->getAirlineNameFa(),
+                ],
+            ],
             
             'origin' => [
                 'iata' => $this->route->origin ?? '',

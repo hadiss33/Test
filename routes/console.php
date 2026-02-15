@@ -1,19 +1,24 @@
 <?php
+
 use Illuminate\Support\Facades\Schedule;
-use App\Jobs\{
-    CleanupOldFlightsJob,
-    UpdateFlightsPriorityJob,
-    CheckMissingFlightsJob,
-    SyncAirlineRoutesJob
-};
+use App\Jobs\CleanupOldFlightsJob;
+use App\Jobs\UpdateFlightsPriorityJob;
+use App\Jobs\CheckMissingFlightsJob;
+use App\Jobs\SyncAirlineRoutesJob;
 
-$airlines = ['nira', 'sepehr' , 'ravis'];
 
-/*
-|--------------------------------------------------------------------------
-| Sync airline routes
-|--------------------------------------------------------------------------
-*/
+$airlines = ['nira', 'sepehr', 'ravis'];
+
+$periods = [
+    3   => 'everyTwoMinutes',
+    7   => 'everyFiveMinutes',
+    30  => 'everyFifteenMinutes',
+    60  => 'everyThirtyMinutes',
+    90  => 'hourly',
+    120 => 'everyThreeHours',
+];
+
+
 foreach ($airlines as $airline) {
     Schedule::job(new SyncAirlineRoutesJob($airline))
         ->dailyAt('00:00')
@@ -36,19 +41,10 @@ Schedule::job(new CheckMissingFlightsJob)
     ->onOneServer();
 
 
-$periods = [
-    3  => 'everyTwoMinutes',
-    7  => 'everyFiveMinutes',
-    30 => 'everyFifteenMinutes',
-    60 => 'everyThirtyMinutes',
-    90 => 'hourly',
-    120 => 'everyThreeHours',
-];
-
 foreach ($airlines as $airline) {
     foreach ($periods as $period => $frequency) {
         Schedule::job(new UpdateFlightsPriorityJob($period, $airline))
-            ->{$frequency}()
+            ->{$frequency}() 
             ->name("update-flights:$airline:$period")
             ->withoutOverlapping()
             ->onOneServer();
