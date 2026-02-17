@@ -8,6 +8,7 @@ class NiraAnalyze
 {
     public function adaptFlightsToRoutes(array $flights, ?int $id): array
     {
+        //
         $routes = [];
 
         foreach ($flights as $flight) {

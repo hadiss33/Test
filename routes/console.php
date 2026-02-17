@@ -27,7 +27,6 @@ foreach ($airlines as $airline) {
         ->onOneServer();
 }
 
-
 Schedule::job(new CleanupOldFlightsJob)
     ->dailyAt('01:00')
     ->name('cleanup-old-flights')
@@ -40,11 +39,10 @@ Schedule::job(new CheckMissingFlightsJob)
     ->withoutOverlapping()
     ->onOneServer();
 
-
 foreach ($airlines as $airline) {
     foreach ($periods as $period => $frequency) {
         Schedule::job(new UpdateFlightsPriorityJob($period, $airline))
-            ->{$frequency}() 
+            ->{$frequency}()
             ->name("update-flights:$airline:$period")
             ->withoutOverlapping()
             ->onOneServer();

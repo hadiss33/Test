@@ -4,7 +4,7 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use App\Repositories\Contracts\FlightServiceRepositoryInterface;
-use Illuminate\Support\Facades\Log;
+// use Illuminate\Support\Facades\Log;
 use App\Services\FlightCleanupService;
 use Illuminate\Support\Facades\Validator;
 use App\Enums\ServiceProviderEnum;
@@ -85,9 +85,9 @@ class FlightUpdateController extends Controller
                 $updater = new $updaterClass($provider, $config['code'] ?? null, $service);
 
                 foreach ($priorities as $priority) {
-                    Log::info("Starting {$service} update - Priority {$priority}", [
-                        'airline' => $config['code'] ?? 'N/A',
-                    ]);
+                    // Log::info("Starting {$service} update - Priority {$priority}", [
+                    //     'airline' => $config['code'] ?? 'N/A',
+                    // ]);
                     
                     $priorityStartTime = microtime(true);
                     
@@ -106,16 +106,16 @@ class FlightUpdateController extends Controller
                         }
                     }
 
-                    Log::info("Completed {$service} update - Priority {$priority}", $stats);
+                    // Log::info("Completed {$service} update - Priority {$priority}", $stats);
                 }
 
                 $airlineResult['status'] = 'success';
 
             } catch (\Exception $e) {
-                Log::error("Flight update error for {$config['code']}: " . $e->getMessage(), [
-                    'service' => $service,
-                    'trace' => $e->getTraceAsString()
-                ]);
+                // Log::error("Flight update error for {$config['code']}: " . $e->getMessage(), [
+                //     'service' => $service,
+                //     'trace' => $e->getTraceAsString()
+                // ]);
                 
                 $airlineResult['status'] = 'error';
                 $airlineResult['error_message'] = $e->getMessage();
@@ -185,13 +185,13 @@ class FlightUpdateController extends Controller
                 'data' => $result
             ]);
         } catch (\Exception $e) {
-            Log::error('Cleanup error: ' . $e->getMessage());
+            // Log::error('Cleanup error: ' . $e->getMessage());
             
-            return response()->json([
-                'status' => 'error',
-                'message' => 'Failed to cleanup old flights',
-                'error' => $e->getMessage()
-            ], 500);
+            // return response()->json([
+            //     'status' => 'error',
+            //     'message' => 'Failed to cleanup old flights',
+            //     'error' => $e->getMessage()
+            // ], 500);
         }
     }
 
@@ -206,13 +206,13 @@ class FlightUpdateController extends Controller
                 'data' => $result
             ]);
         } catch (\Exception $e) {
-            Log::error('Check missing error: ' . $e->getMessage());
+            // Log::error('Check missing error: ' . $e->getMessage());
             
-            return response()->json([
-                'status' => 'error',
-                'message' => 'Failed to check missing flights',
-                'error' => $e->getMessage()
-            ], 500);
+            // return response()->json([
+            //     'status' => 'error',
+            //     'message' => 'Failed to check missing flights',
+            //     'error' => $e->getMessage()
+            // ], 500);
         }
     }
 }

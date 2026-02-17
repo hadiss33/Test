@@ -3,12 +3,12 @@
 namespace App\Services\FlightProviders;
 
 use GuzzleHttp\Client;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 
 class NiraProvider implements FlightProviderInterface
 {
     protected $config;
+
     protected $client;
 
     public function __construct(array $config)
@@ -37,10 +37,12 @@ class NiraProvider implements FlightProviderInterface
             ]);
 
             $data = json_decode($response->getBody()->getContents(), true);
+
             return $data['NRSFlights'] ?? [];
 
         } catch (\Exception $e) {
             Log::error("Nira Schedule Error [{$this->config['code']}]: ".$e->getMessage());
+
             return [];
         }
     }
@@ -65,10 +67,12 @@ class NiraProvider implements FlightProviderInterface
             ]);
 
             $data = json_decode($response->getBody()->getContents(), true);
+
             return $data['AvailableFlights'] ?? [];
 
         } catch (\Exception $e) {
             Log::error("Nira Availability Error [{$this->config['code']}]: ".$e->getMessage());
+
             return [];
         }
     }
@@ -77,107 +81,120 @@ class NiraProvider implements FlightProviderInterface
     {
         $cacheKey = "fare:{$this->config['code']}:{$origin}-{$destination}:{$flightClass}:{$date}:{$flightNo}";
 
-        return Cache::remember($cacheKey, 300, function () use ($origin, $destination, $flightClass, $date, $flightNo) {
-            $url = $this->config['base_url_ws1'].'/FareJS.jsp';
+        $url = $this->config['base_url_ws1'].'/FareJS.jsp';
 
-            try {
-                // FIX: Use actual parameters instead of hardcoded test values
-                $response = $this->client->get($url, [
-                    'query' => [
-                        'AirLine' => $this->config['code'],
-                        'Route' => "{$origin}-{$destination}",
-                        'RBD' => $flightClass,
-                        'DepartureDate' => $date,
-                        'FlightNO' => $flightNo,
-                        'OfficeUser' => $this->config['office_user'],
-                        'OfficePass' => $this->config['office_pass'],
-                    ],
-                ]);
+        try {
+            $response = $this->client->get($url, [
+                'query' => [
+                    'AirLine' => $this->config['code'],
+                    'Route' => "{$origin}-{$destination}",
+                    'RBD' => $flightClass,
+                    'DepartureDate' => $date,
+                    'FlightNO' => $flightNo,
+                    'OfficeUser' => $this->config['office_user'],
+                    'OfficePass' => $this->config['office_pass'],
+                ],
+            ]);
+            $rawBody = $response->getBody()->getContents();
 
-                $rawBody = $response->getBody()->getContents();
-                $utf8Body = iconv('Windows-1256', 'UTF-8//IGNORE', $rawBody);
+            $rawBody = trim($rawBody);
+
+            if (! mb_check_encoding($rawBody, 'UTF-8')) {
+                $utf8Body = @iconv('CP1256', 'UTF-8//IGNORE', $rawBody);
+            } else {
+                $utf8Body = $rawBody;
+            }
+
+            $rawData = json_decode($utf8Body, true);
+
+            if (is_null($rawData)) {
+                $utf8Body = preg_replace('/[\x00-\x1F\x80-\xFF]/', '', $utf8Body);
                 $rawData = json_decode($utf8Body, true);
+            }
 
-                if (isset($rawData['Error']) || empty($rawData)) {
-                    Log::warning("Fare API returned error or empty", [
-                        'airline' => $this->config['code'],
-                        'route' => "{$origin}-{$destination}",
-                        'class' => $flightClass,
-                        'date' => $date,
-                        'flight_no' => $flightNo,
-                        'error' => $rawData['Error'] ?? 'Empty response'
-                    ]);
-                    return null;
-                }
-
-                // Parse refund rules
-                $crcnRules = [];
-                if (!empty($rawData['CRCNRules'])) {
-                    foreach (explode('/', trim($rawData['CRCNRules'], '/')) as $rule) {
-                        $parts = explode(',', $rule);
-                        $crcnRules[] = [
-                            'text' => $parts[0] ?? '',
-                            'percent' => isset($parts[1]) ? (int) $parts[1] : 0,
-                        ];
-                    }
-                }
-
-                // Parse taxes
-                $formatTaxes = function ($taxString) {
-                    if (empty($taxString)) {
-                        return [];
-                    }
-                    $result = [];
-                    foreach (explode('$', trim($taxString, '$')) as $taxGroup) {
-                        $taxItem = [];
-                        foreach (explode(',', $taxGroup) as $part) {
-                            if (str_contains($part, 'EN_Desc:')) {
-                                $taxItem['title_en'] = substr($part, 8);
-                            } elseif (str_contains($part, 'FA_Desc:')) {
-                                $taxItem['title_fa'] = substr($part, 8);
-                            } elseif (str_contains($part, ':')) {
-                                [$key, $val] = explode(':', $part);
-                                $taxItem["Tax-{$key}"] = $val;
-                            }
-                        }
-                        if (!empty($taxItem)) {
-                            $result[] = $taxItem;
-                        }
-                    }
-                    return $result;
-                };
-
-                $data = [
-                    'AdultTotalPrice' => $rawData['AdultTotalPrice'] ?? null,
-                    'InfantTotalPrice' => $rawData['InfantTotalPrice'] ?? null,
-                    'ChildTotalPrice' => $rawData['ChildTotalPrice'] ?? null,
-                    'AdultFare' => $rawData['AdultFare'] ?? null,
-                    'ChildFare' => $rawData['ChildFare'] ?? null,
-                    'InfantFare' => $rawData['InfantFare'] ?? null,
-                    'BaggageAllowanceWeight' => $rawData['BaggageAllowanceWeight'] ?? null,
-                    'BaggageAllowancePieces' => $rawData['BaggageAllowancePieces'] ?? null,
-                    'EligibilityText' => $rawData['EligibilityText'] ?? null,
-                    'CRCNRules' => $crcnRules,
-                    'Taxes' => [
-                        'Adult' => $formatTaxes($rawData['AdultTaxes'] ?? ''),
-                        'Child' => $formatTaxes($rawData['ChildTaxes'] ?? ''),
-                        'Infant' => $formatTaxes($rawData['InfantTaxes'] ?? ''),
-                    ],
-                ];
-
-                return $data;
-
-            } catch (\Exception $e) {
-                Log::error("Nira Fare Error [{$this->config['code']}]: ".$e->getMessage(), [
+            if (isset($rawData['Error']) || empty($rawData)) {
+                Log::warning('Fare API returned error or empty', [
+                    'airline' => $this->config['code'],
                     'route' => "{$origin}-{$destination}",
                     'class' => $flightClass,
                     'date' => $date,
                     'flight_no' => $flightNo,
-                    'trace' => $e->getTraceAsString()
+                    'error' => $rawData['Error'] ?? 'Empty response',
                 ]);
+
                 return null;
             }
-        });
+
+            // Parse refund rules
+            $crcnRules = [];
+            if (! empty($rawData['CRCNRules'])) {
+                foreach (explode('/', trim($rawData['CRCNRules'], '/')) as $rule) {
+                    $parts = explode(',', $rule);
+                    $crcnRules[] = [
+                        'text' => $parts[0] ?? '',
+                        'percent' => isset($parts[1]) ? (int) $parts[1] : 0,
+                    ];
+                }
+            }
+
+            // Parse taxes
+            $formatTaxes = function ($taxString) {
+                if (empty($taxString)) {
+                    return [];
+                }
+                $result = [];
+                foreach (explode('$', trim($taxString, '$')) as $taxGroup) {
+                    $taxItem = [];
+                    foreach (explode(',', $taxGroup) as $part) {
+                        if (str_contains($part, 'EN_Desc:')) {
+                            $taxItem['title_en'] = substr($part, 8);
+                        } elseif (str_contains($part, 'FA_Desc:')) {
+                            $taxItem['title_fa'] = substr($part, 8);
+                        } elseif (str_contains($part, ':')) {
+                            [$key, $val] = explode(':', $part);
+                            $taxItem["Tax-{$key}"] = $val;
+                        }
+                    }
+                    if (! empty($taxItem)) {
+                        $result[] = $taxItem;
+                    }
+                }
+
+                return $result;
+            };
+
+            $data = [
+                'AdultTotalPrice' => $rawData['AdultTotalPrice'] ?? null,
+                'InfantTotalPrice' => $rawData['InfantTotalPrice'] ?? null,
+                'ChildTotalPrice' => $rawData['ChildTotalPrice'] ?? null,
+                'AdultFare' => $rawData['AdultFare'] ?? null,
+                'ChildFare' => $rawData['ChildFare'] ?? null,
+                'InfantFare' => $rawData['InfantFare'] ?? null,
+                'BaggageAllowanceWeight' => $rawData['BaggageAllowanceWeight'] ?? null,
+                'BaggageAllowancePieces' => $rawData['BaggageAllowancePieces'] ?? null,
+                'EligibilityText' => $rawData['EligibilityText'] ?? null,
+                'CRCNRules' => $crcnRules,
+                'Taxes' => [
+                    'Adult' => $formatTaxes($rawData['AdultTaxes'] ?? ''),
+                    'Child' => $formatTaxes($rawData['ChildTaxes'] ?? ''),
+                    'Infant' => $formatTaxes($rawData['InfantTaxes'] ?? ''),
+                ],
+            ];
+
+            return $data;
+
+        } catch (\Exception $e) {
+            Log::error("Nira Fare Error [{$this->config['code']}]: ".$e->getMessage(), [
+                'route' => "{$origin}-{$destination}",
+                'class' => $flightClass,
+                'date' => $date,
+                'flight_no' => $flightNo,
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return null;
+        }
+
     }
 
     public function parseAvailableSeats(string $cap, string $flightClass): int
@@ -229,13 +246,14 @@ class NiraProvider implements FlightProviderInterface
         if ($key) {
             return $this->config[$key] ?? null;
         }
+
         return $this->config;
     }
 
     public function prepareAvailabilityRequestData(string $origin, string $destination, string $date): array
     {
         return [
-            'url' => $this->config['base_url_ws1'] . '/AvailabilityFareJS.jsp',
+            'url' => $this->config['base_url_ws1'].'/AvailabilityFareJS.jsp',
             'query' => [
                 'AirLine' => $this->config['code'],
                 'cbSource' => $origin,
@@ -246,9 +264,10 @@ class NiraProvider implements FlightProviderInterface
                 'cbInfantQty' => 0,
                 'OfficeUser' => $this->config['office_user'],
                 'OfficePass' => $this->config['office_pass'],
-            ]
+            ],
         ];
     }
+
     public function getCharterFlights(string $fromDate, string $toDate): array
     {
         return [];

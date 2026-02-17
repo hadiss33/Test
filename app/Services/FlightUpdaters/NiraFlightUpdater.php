@@ -12,7 +12,7 @@ use Carbon\Carbon;
 use Illuminate\Http\Client\Pool;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Log;
+// use Illuminate\Support\Facades\Log;
 
 /**
  * Nira Flight Updater
@@ -54,7 +54,7 @@ class NiraFlightUpdater implements FlightUpdaterInterface
          ->get(); 
 
         if ($routes->isEmpty()) {
-            Log::warning("No routes found for airline {$this->iata}");
+            // Log::warning("No routes found for airline {$this->iata}");
 
             return $stats;
         }
@@ -63,7 +63,7 @@ class NiraFlightUpdater implements FlightUpdaterInterface
         $tasks = $this->prepareTasks($routes, $dates, $stats);
         $this->processBatchRequests($tasks, $stats);
 
-        Log::info("Nira update completed for {$this->iata} - Period {$period}", $stats);
+        // Log::info("Nira update completed for {$this->iata} - Period {$period}", $stats);
 
         return $stats;
     }
@@ -138,24 +138,24 @@ class NiraFlightUpdater implements FlightUpdaterInterface
                             }
                         } else {
                             $stats['errors']++;
-                            Log::warning('Nira API request failed', [
-                                'route' => "{$task['route']->origin}-{$task['route']->destination}",
-                                'status' => $response->status(),
-                            ]);
+                            // Log::warning('Nira API request failed', [
+                            //     'route' => "{$task['route']->origin}-{$task['route']->destination}",
+                            //     'status' => $response->status(),
+                            // ]);
                         }
                     } else {
                         $stats['errors']++;
-                        Log::error('Nira API connection error', [
-                            'route' => "{$task['route']->origin}-{$task['route']->destination}",
-                            'error' => $response instanceof \Throwable ? $response->getMessage() : 'Unknown',
-                        ]);
+                        // Log::error('Nira API connection error', [
+                        //     'route' => "{$task['route']->origin}-{$task['route']->destination}",
+                        //     'error' => $response instanceof \Throwable ? $response->getMessage() : 'Unknown',
+                        // ]);
                     }
                 }
 
                 sleep(1);
 
             } catch (\Exception $e) {
-                Log::error('Batch processing fatal error: '.$e->getMessage());
+                // Log::error('Batch processing fatal error: '.$e->getMessage());
             }
         }
     }
@@ -220,11 +220,11 @@ class NiraFlightUpdater implements FlightUpdaterInterface
             DB::rollBack();
             $stats['errors']++;
 
-            Log::error('Nira save flight error', [
-                'flight_no' => $flightData['FlightNo'] ?? 'unknown',
-                'route' => "{$route->origin}-{$route->destination}",
-                'error' => $e->getMessage(),
-            ]);
+            // Log::error('Nira save flight error', [
+            //     'flight_no' => $flightData['FlightNo'] ?? 'unknown',
+            //     'route' => "{$route->origin}-{$route->destination}",
+            //     'error' => $e->getMessage(),
+            // ]);
         }
     }
 
@@ -252,11 +252,11 @@ class NiraFlightUpdater implements FlightUpdaterInterface
             FetchFlightFareJob::dispatch($flightClass);
             $stats['jobs_dispatched']++;
 
-            Log::info('Nira Job dispatched for FlightClass', [
-                'flight_class_id' => $flightClass->id,
-                'flight_number' => $flight->flight_number,
-                'class_code' => $classCode,
-            ]);
+            // Log::info('Nira Job dispatched for FlightClass', [
+            //     'flight_class_id' => $flightClass->id,
+            //     'flight_number' => $flight->flight_number,
+            //     'class_code' => $classCode,
+            // ]);
         }
 
         return $flightClass->wasRecentlyCreated || $flightClass->wasChanged();

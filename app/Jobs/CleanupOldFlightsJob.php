@@ -16,10 +16,10 @@ class CleanupOldFlightsJob implements ShouldQueue
 
     public function handle(FlightCleanupService $cleanupService): void
     {
-        Log::info('Starting cleanup of old flights...');
+        // Log::info('Starting cleanup of old flights...');
         
         $result = $cleanupService->cleanupPastFlights();
         
-        Log::info('Cleanup completed', $result);
+        // Log::info('Cleanup completed', $result);
     }
 }
