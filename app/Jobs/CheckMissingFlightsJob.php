@@ -14,12 +14,17 @@ class CheckMissingFlightsJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
+    public function __construct()
+    {
+        $this->queue = 'fastJob';
+    }
+
     public function handle(\App\Services\FlightCleanupService $cleanupService): void
     {
         // Log::info('Checking for missing flights...');
-        
+
         $result = $cleanupService->handleMissingFlights();
-        
+
         // Log::info('Missing flights check completed', $result);
     }
 }

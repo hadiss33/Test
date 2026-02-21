@@ -13,18 +13,16 @@ return new class extends Migration
     {
         Schema::create('flight_fare_breakdown', function (Blueprint $table) {
             $table->id();
-            
+
             $table->foreignId('flight_class_id')
                 ->constrained('flight_classes')
                 ->onDelete('cascade');
 
-            $table->decimal('base_adult', 12, 2)->default(0);
-            $table->decimal('base_child', 12, 2)->default(0);
-            $table->decimal('base_infant', 12, 2)->default(0);
-            
+            $table->decimal('base_adult', 12, 2)->nullable();
+            $table->decimal('base_child', 12, 2)->nullable();
+            $table->decimal('base_infant', 12, 2)->nullable();
+
             $table->timestamp('updated_at')->nullable();
-            
-       
         });
     }
 

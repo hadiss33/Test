@@ -21,7 +21,7 @@ $periods = [
 
 foreach ($airlines as $airline) {
     Schedule::job(new SyncAirlineRoutesJob($airline))
-        ->dailyAt('00:00')
+        ->dailyAt('07:32')
         ->name("sync-airline-routes:$airline")
         ->withoutOverlapping()
         ->onOneServer();

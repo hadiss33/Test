@@ -14,12 +14,17 @@ class CleanupOldFlightsJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
+    public function __construct()
+    {
+        $this->queue = 'snailJob';
+    }
+
     public function handle(FlightCleanupService $cleanupService): void
     {
         // Log::info('Starting cleanup of old flights...');
-        
+
         $result = $cleanupService->cleanupPastFlights();
-        
+
         // Log::info('Cleanup completed', $result);
     }
 }

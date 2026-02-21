@@ -7,7 +7,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
-use Illuminate\Support\Facades\Log;
+// use Illuminate\Support\Facades\Log;
 use App\Enums\ServiceProviderEnum;
 
 class UpdateFlightsPriorityJob implements ShouldQueue
@@ -41,14 +41,14 @@ class UpdateFlightsPriorityJob implements ShouldQueue
         $airlines = array_filter($airlines);
 
         // Check if airlines list is empty
-        if (empty($airlines)) {
-            Log::warning("No airlines found for priority update", [
-                'priority' => $this->priority,
-                'service' => $this->service,
-                'airline_code' => $this->airlineCode
-            ]);
-            return;
-        }
+        // if (empty($airlines)) {
+        //     Log::warning("No airlines found for priority update", [
+        //         'priority' => $this->priority,
+        //         'service' => $this->service,
+        //         'airline_code' => $this->airlineCode
+        //     ]);
+        //     return;
+        // }
 
         // ✅ Get service-specific classes
         $serviceEnum = ServiceProviderEnum::from($this->service);
@@ -58,17 +58,17 @@ class UpdateFlightsPriorityJob implements ShouldQueue
         foreach ($airlines as $config) {
             try {
                 // Validate config structure
-                if (!is_array($config) || !isset($config['code'])) {
-                    Log::error("Invalid config structure for priority {$this->priority}", [
-                        'service' => $this->service,
-                        'config' => $config
-                    ]);
-                    continue;
-                }
+                // if (!is_array($config) || !isset($config['code'])) {
+                    // Log::error("Invalid config structure for priority {$this->priority}", [
+                    //     'service' => $this->service,
+                    //     'config' => $config
+                    // ]);
+                //     continue;
+                // }
 
-                Log::info("Starting priority {$this->priority} update for {$config['code']}", [
-                    'service' => $this->service
-                ]);
+                // Log::info("Starting priority {$this->priority} update for {$config['code']}", [
+                //     'service' => $this->service
+                // ]);
 
                 $provider = new $providerClass($config);
 
@@ -77,25 +77,25 @@ class UpdateFlightsPriorityJob implements ShouldQueue
 
                 $stats = $updater->updateByPeriod($this->priority);
 
-                Log::info("Priority {$this->priority} update completed for {$config['code']}", $stats);
+                // Log::info("Priority {$this->priority} update completed for {$config['code']}", $stats);
             } catch (\Exception $e) {
                 $airlineCode = $config['code'] ?? 'unknown';
-                Log::error("Priority update failed for {$airlineCode}: " . $e->getMessage(), [
-                    'priority' => $this->priority,
-                    'service' => $this->service,
-                    'trace' => $e->getTraceAsString()
-                ]);
+                // Log::error("Priority update failed for {$airlineCode}: " . $e->getMessage(), [
+                //     'priority' => $this->priority,
+                //     'service' => $this->service,
+                //     'trace' => $e->getTraceAsString()
+                // ]);
             }
         }
     }
 
     public function failed(\Throwable $exception): void
     {
-        Log::error("UpdateFlightsPriorityJob failed", [
-            'priority' => $this->priority,
-            'service' => $this->service,
-            'airline' => $this->airlineCode,
-            'error' => $exception->getMessage()
-        ]);
+        // Log::error("UpdateFlightsPriorityJob failed", [
+        //     'priority' => $this->priority,
+        //     'service' => $this->service,
+        //     'airline' => $this->airlineCode,
+        //     'error' => $exception->getMessage()
+        // ]);
     }
 }

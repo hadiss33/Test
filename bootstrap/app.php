@@ -24,15 +24,10 @@ return Application::configure(basePath: dirname(__DIR__))
         $schedule->command('test:schedule')->everyMinute();
         $schedule->command('cache:clear-expired')->everyFiveMinutes();
 
-        $schedule->command('queue:work --queue=fastJob --sleep=3 --tries=3 --timeout=120')
+        $schedule->command('queue:work --queue=fastJob,queueJob,snailJob --sleep=3 --tries=3 --timeout=600 --stop-when-empty')
             ->withoutOverlapping()
             ->runInBackground()
             ->everyMinute();
-
-        $schedule->command('queue:work --queue=queueJob --sleep=3 --tries=3 --timeout=120')
-            ->withoutOverlapping()
-            ->runInBackground()
-            ->everyTwoMinutes();
 
         $schedule->command('cache:backup-delete-flights')->dailyAt('00:00');
     })

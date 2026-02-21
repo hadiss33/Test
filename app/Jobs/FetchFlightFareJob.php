@@ -90,24 +90,7 @@ class FetchFlightFareJob implements ShouldQueue
             $this->saveBaggage($fareData);
             $this->saveRules($fareData['CRCNRules'] ?? []);
 
-<<<<<<< HEAD
-            Log::info("FetchFlightFareJob completed successfully", [
-                'flight_class_id' => $this->flightClass->id,
-                'class_code' => $this->flightClass->class_code,
-            ]);
-        } catch (\Exception $e) {
-            Log::error("FetchFlightFareJob failed", [
-                'flight_class_id' => $this->flightClass->id,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
 
-            throw $e;
-=======
-            // Log::info("FetchFlightFareJob completed successfully", [
-            //     'flight_class_id' => $this->flightClass->id,
-            //     'class_code' => $this->flightClass->class_code,
-            // ]);
 
         } catch (\Exception $e) {
             // Log::error("FetchFlightFareJob failed", [
@@ -117,7 +100,7 @@ class FetchFlightFareJob implements ShouldQueue
             // ]);
             
             throw $e; 
->>>>>>> b58712a5317c8fb0539c2a0c031bf31ff28246be
+// >>>>>>> b58712a5317c8fb0539c2a0c031bf31ff28246be
         }
     }
 
@@ -274,7 +257,7 @@ class FetchFlightFareJob implements ShouldQueue
                 continue;
             }
 
-            FlightRule::create([
+            FlightRule::updateOrCreate([
                 'flight_class_id' => $this->flightClass->id,
                 'rules' => $rule['text'] ?? null,
                 'penalty_percentage' => isset($rule['percent']) ? (int) $rule['percent'] : null,
