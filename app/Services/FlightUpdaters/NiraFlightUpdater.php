@@ -14,7 +14,6 @@ use Illuminate\Http\Client\Pool;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
-
 class NiraFlightUpdater implements FlightUpdaterInterface
 {
     protected FlightProviderInterface $provider;
@@ -30,8 +29,6 @@ class NiraFlightUpdater implements FlightUpdaterInterface
         $this->iata     = $iata;
         $this->service  = $service;
     }
-
-
 
     public function updateByPeriod(int $period): array
     {
@@ -62,8 +59,6 @@ class NiraFlightUpdater implements FlightUpdaterInterface
         return $stats;
     }
 
-
-
     protected function prepareTasks($routes, array $dates, array &$stats): array
     {
         $tasks = [];
@@ -90,8 +85,6 @@ class NiraFlightUpdater implements FlightUpdaterInterface
 
         return $tasks;
     }
-
-
 
     protected function processBatchRequests(array $tasks, array &$stats): void
     {
@@ -166,8 +159,6 @@ class NiraFlightUpdater implements FlightUpdaterInterface
         }
     }
 
-
-
     protected function processFlights(
         array $allFlightRows,
         array $allDetailRows,
@@ -176,7 +167,6 @@ class NiraFlightUpdater implements FlightUpdaterInterface
     ): void {
         $flightKeys = array_keys($allFlightRows);
 
-        // یک SELECT — کدام پروازها در DB هستند؟
         $existingFlightIds = $this->findExistingFlights($flightKeys);
 
         $newFlightKeys      = [];
@@ -199,8 +189,6 @@ class NiraFlightUpdater implements FlightUpdaterInterface
         }
     }
 
-
-
     protected function handleNewFlights(
         array $newFlightKeys,
         array $allFlightRows,
@@ -208,7 +196,6 @@ class NiraFlightUpdater implements FlightUpdaterInterface
         array $taskFlightMap,
         array &$stats
     ): void {
-        // INSERT flights
         $flightRows = array_map(fn($k) => $allFlightRows[$k], $newFlightKeys);
         foreach (array_chunk($flightRows, self::FLIGHT_BATCH_SIZE) as $batch) {
             Flight::insert($batch);
@@ -253,7 +240,6 @@ class NiraFlightUpdater implements FlightUpdaterInterface
             FlightClass::insert($batch);
         }
 
-
         if (! empty($newFlightIds)) {
             $newClasses = FlightClass::whereIn('flight_id', array_values($newFlightIds))->get();
 
@@ -263,8 +249,6 @@ class NiraFlightUpdater implements FlightUpdaterInterface
             }
         }
     }
-
-
 
     protected function handleExistingFlights(
         array $existingFlightKeys, // [flightKey => flight_id]
@@ -283,6 +267,7 @@ class NiraFlightUpdater implements FlightUpdaterInterface
 
         $detailRows = [];
         $classRows  = [];
+        $classCombosToProcess = [];
 
         foreach ($existingFlightKeys as $key => $flightId) {
             $stats['checked']++;
@@ -302,8 +287,27 @@ class NiraFlightUpdater implements FlightUpdaterInterface
                     'status'          => $this->provider->determineStatus($cap),
                     'updated_at'      => $now,
                 ];
+
+                $classCombosToProcess[] = $flightId . '|' . $classCode;
             }
         }
+
+
+        $existingClasses = FlightClass::whereIn('flight_id', $flightIds)
+            ->selectRaw("CONCAT(flight_id, '|', class_code) as combo")
+            ->pluck('combo', 'combo')
+            ->toArray();
+
+        $newClassCombos = [];
+        $flightIdsWithNewClasses = [];
+
+        foreach ($classCombosToProcess as $combo) {
+            if (!isset($existingClasses[$combo])) {
+                $newClassCombos[] = $combo;
+                $flightIdsWithNewClasses[] = explode('|', $combo)[0];
+            }
+        }
+        $flightIdsWithNewClasses = array_unique($flightIdsWithNewClasses);
 
         foreach (array_chunk($detailRows, self::FLIGHT_BATCH_SIZE) as $batch) {
             FlightDetail::upsert(
@@ -320,11 +324,21 @@ class NiraFlightUpdater implements FlightUpdaterInterface
                 ['payable_adult', 'available_seats', 'status', 'updated_at']
             );
         }
+
+        if (!empty($newClassCombos)) {
+            $fetchedNewClasses = FlightClass::whereIn('flight_id', $flightIdsWithNewClasses)->get();
+
+            foreach ($fetchedNewClasses as $cls) {
+                $combo = $cls->flight_id . '|' . $cls->class_code;
+                
+                if (in_array($combo, $newClassCombos)) {
+                    FetchFlightFareJob::dispatch($cls);
+                    $stats['jobs_dispatched']++;
+                }
+            }
+        }
     }
 
-    // ══════════════════════════════════════════════════════
-    // HELPERS
-    // ══════════════════════════════════════════════════════
 
     protected function findExistingFlights(array $flightKeys): array
     {
