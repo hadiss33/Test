@@ -4,355 +4,344 @@ namespace App\Services\FlightUpdaters;
 
 use App\Models\AirlineActiveRoute;
 use App\Models\Flight;
-use App\Models\FlightBaggage;
 use App\Models\FlightClass;
 use App\Models\FlightDetail;
-use App\Models\FlightFareBreakdown;
-use App\Models\FlightRule;
-use App\Models\FlightTax;
 use App\Services\FlightProviders\FlightProviderInterface;
 use Carbon\Carbon;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
-/**
- * Sepehr Flight Updater
- *
- * Uses 1-step process:
- * - GetCharterFlights - Returns complete flight data including:
- *   - Flight details (number, times, aircraft)
- *   - All classes with fares
- *   - Baggage info
- *   - Cancellation policies (rules)
- *
- * NO Jobs needed - all data comes in one API call!
- */
 class SepehrFlightUpdater implements FlightUpdaterInterface
 {
+    use BulkUpsertHelper;
+
     protected FlightProviderInterface $provider;
-
     protected ?string $iata;
-
     protected string $service;
+
+    private const BATCH_SIZE = 100;
 
     public function __construct(FlightProviderInterface $provider, ?string $iata, string $service = 'sepehr')
     {
         $this->provider = $provider;
-        $this->iata = $iata;
-        $this->service = $service;
+        $this->iata     = $iata;
+        $this->service  = $service;
     }
 
     public function updateByPeriod(int $period): array
     {
         $stats = [
-            'checked' => 0,
-            'updated' => 0,
-            'skipped' => 0,
-            'errors' => 0,
+            'checked'          => 0,
+            'updated'          => 0,
+            'skipped'          => 0,
+            'errors'           => 0,
             'routes_processed' => 0,
-            'flights_found' => 0,
-            'jobs_dispatched' => 0, // Always 0 for Sepehr
+            'flights_found'    => 0,
+            'jobs_dispatched'  => 0,
         ];
 
         $fullConfig = $this->provider->getConfig();
-
-        $query = AirlineActiveRoute::where('application_interfaces_id', $fullConfig['id'] ?? null);
-
-
-
-        $routes = $query->get();
+        $routes     = AirlineActiveRoute::where('application_interfaces_id', $fullConfig['id'] ?? null)->get();
 
         if ($routes->isEmpty()) {
             Log::warning('No routes found for Sepehr service');
-
             return $stats;
         }
 
         $stats['routes_processed'] = $routes->count();
-
-        [$startDate, $endDate] = $this->getDateRangeForPeriod($period);
+        [$startDate, $endDate]     = $this->getDateRangeForPeriod($period);
 
         try {
             $rawData = $this->provider->getCharterFlights($startDate, $endDate);
 
             if (empty($rawData['CharterFlightList'])) {
-                Log::warning('Sepehr GetCharterFlights returned no flights', [
-                    'period' => $period,
-                    'from' => $startDate,
-                    'to' => $endDate,
-                ]);
-
                 return $stats;
             }
 
-            $flightsList = $rawData['CharterFlightList'];
+            $flightsList            = $rawData['CharterFlightList'];
             $stats['flights_found'] = count($flightsList);
 
-            // Process each flight
-            foreach ($flightsList as $flightData) {
-                $this->processFlightData($flightData, $routes, $stats);
+            $collected = $this->collectAllData($flightsList, $routes);
+
+            if (empty($collected['flights'])) {
+                return $stats;
             }
 
-            Log::info("Sepehr update completed - Period {$period}", $stats);
+            $this->bulkSaveAll($collected, $stats);
 
         } catch (\Exception $e) {
             $stats['errors']++;
             Log::error('Sepehr updateByPeriod failed', [
                 'period' => $period,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
+                'error'  => $e->getMessage(),
             ]);
         }
 
         return $stats;
     }
 
-    protected function processFlightData(array $flightData, $routes, array &$stats): void
+
+    protected function collectAllData(array $flightsList, $routes): array
     {
-        DB::beginTransaction();
+        $flightRows   = [];
+        $detailRows   = [];
+        $classDataMap = []; 
 
-        try {
-            // Find matching route
-            $origin = $flightData['Origin']['Code'];
-            $destination = $flightData['Destination']['Code'];
+        // map سریع routes
+        $routeMap = $routes->keyBy(fn($r) => $r->origin . '|' . $r->destination);
 
-            $route = $routes->first(function ($r) use ($origin, $destination) {
-                return $r->origin === $origin && $r->destination === $destination;
-            });
+        foreach ($flightsList as $fd) {
+            $origin      = $fd['Origin']['Code'] ?? null;
+            $destination = $fd['Destination']['Code'] ?? null;
 
-            if (! $route) {
-                Log::debug('Sepehr flight route not in active routes', [
-                    'origin' => $origin,
-                    'destination' => $destination,
-                    'flight_no' => $flightData['FlightNumber'] ?? 'unknown',
-                ]);
-                DB::rollBack();
+            if (! $origin || ! $destination) continue;
 
-                return;
+            $route = $routeMap->get($origin . '|' . $destination);
+            if (! $route) continue;
+
+            $depDt     = Carbon::parse($fd['DepartureDateTime'])->format('Y-m-d H:i:s');
+            $flightKey = $route->id . '|' . $fd['FlightNumber'] . '|' . $depDt;
+
+            $flightRows[$flightKey] = [
+                'airline_active_route_id' => $route->id,
+                'flight_number'           => $fd['FlightNumber'],
+                'departure_datetime'      => $depDt,
+                'iata'                    => $fd['Airline'],
+                'missing_count'           => 0,
+                'updated_at'              => now()->format('Y-m-d H:i:s'),
+            ];
+
+            $detailRows[$flightKey] = [
+                'arrival_datetime'   => isset($fd['ArrivalDateTime'])
+                    ? Carbon::parse($fd['ArrivalDateTime'])->format('Y-m-d H:i:s')
+                    : null,
+                'aircraft_code'      => $fd['Aircraft'] ?? null,
+                'aircraft_type_code' => $fd['Aircraft'] ?? null,
+                'updated_at'         => now()->format('Y-m-d H:i:s'),
+            ];
+
+            $classDataMap[$flightKey] = $fd['FlightClassList'] ?? [];
+        }
+
+        return [
+            'flights'   => $flightRows,
+            'details'   => $detailRows,
+            'classData' => $classDataMap,
+        ];
+    }
+
+    // ─────────────────────────────────────────────
+    // فاز ۲: Bulk Save — کمترین تعداد query ممکن
+    // ─────────────────────────────────────────────
+
+    protected function bulkSaveAll(array $collected, array &$stats): void
+    {
+        $flightKeys   = array_keys($collected['flights']);
+        $flightRows   = array_values($collected['flights']);
+        $detailRows   = $collected['details'];
+        $classDataMap = $collected['classData'];
+
+        $existingMap = $this->findExistingFlights($flightKeys);
+
+        foreach (array_chunk($flightRows, self::BATCH_SIZE) as $batch) {
+            Flight::upsert(
+                $batch,
+                ['airline_active_route_id', 'flight_number', 'departure_datetime'],
+                ['iata', 'missing_count', 'updated_at']
+            );
+        }
+
+        $flightIdMap = $this->fetchFlightIds($flightKeys);
+
+        $detailBulk  = [];
+        $classBulk   = [];
+        $classExtras = []; // برای related data بعد از upsert classes
+
+        foreach ($flightKeys as $fk) {
+            $flightId = $flightIdMap[$fk] ?? null;
+            if (! $flightId) continue;
+
+            $isNew = ! isset($existingMap[$fk]);
+            $stats['checked']++;
+            $isNew ? $stats['updated']++ : $stats['skipped']++;
+
+            $detailBulk[] = array_merge(['flight_id' => $flightId], $detailRows[$fk]);
+
+            foreach ($classDataMap[$fk] as $cd) {
+                $seats = $cd['AvailableSeat'] ?? 0;
+                $fare  = $cd['OnewayFare'] ?? [];
+
+                $classBulk[] = [
+                    'flight_id'       => $flightId,
+                    'class_code'      => $cd['BookingCode'],
+                    'payable_adult'   => (float) ($fare['Adult_Fare']['Payable'] ?? 0),
+                    'payable_child'   => (float) ($fare['Child_Fare']['Payable'] ?? 0),
+                    'payable_infant'  => (float) ($fare['Infant_Fare']['Payable'] ?? 0),
+                    'available_seats' => $seats,
+                    'status'          => $seats > 0 ? 'active' : 'full',
+                    'updated_at'      => now()->format('Y-m-d H:i:s'),
+                ];
+
+                $classExtras[] = [
+                    'flight_id'  => $flightId,
+                    'class_code' => $cd['BookingCode'],
+                    'raw'        => $cd,
+                ];
+            }
+        }
+
+        // ── BULK UPSERT DETAILS (یک query per chunk) ──
+        foreach (array_chunk($detailBulk, self::BATCH_SIZE) as $batch) {
+            FlightDetail::upsert(
+                $batch,
+                ['flight_id'],
+                ['arrival_datetime', 'aircraft_code', 'aircraft_type_code', 'updated_at']
+            );
+        }
+
+        // ── BULK UPSERT CLASSES (یک query per chunk) ──
+        // flight_classes unique constraint دارد: (flight_id, class_code)
+        foreach (array_chunk($classBulk, self::BATCH_SIZE) as $batch) {
+            FlightClass::upsert(
+                $batch,
+                ['flight_id', 'class_code'],
+                ['payable_adult', 'payable_child', 'payable_infant', 'available_seats', 'status', 'updated_at']
+            );
+        }
+
+        // ── بگیر IDs کلاس‌ها (یک query) ──
+        $classIdMap = $this->fetchClassIds($classExtras);
+
+        // ── جمع‌آوری related rows ──
+        $breakdownRows   = [];
+        $baggageRows     = [];
+        $taxRows         = [];
+        $ruleDeleteIds   = [];
+        $ruleInsertRows  = [];
+
+        foreach ($classExtras as $extra) {
+            $ckey    = $extra['flight_id'] . '|' . $extra['class_code'];
+            $classId = $classIdMap[$ckey] ?? null;
+            if (! $classId) continue;
+
+            $cd   = $extra['raw'];
+            $fare = $cd['OnewayFare'] ?? [];
+
+            $breakdownRows[] = [
+                'flight_class_id' => $classId,
+                'base_adult'      => (float) ($fare['Adult_Fare']['BaseFare'] ?? 0),
+                'base_child'      => (float) ($fare['Child_Fare']['BaseFare'] ?? 0),
+                'base_infant'     => (float) ($fare['Infant_Fare']['BaseFare'] ?? 0),
+                'updated_at'      => now()->format('Y-m-d H:i:s'),
+            ];
+
+            $adult  = $cd['AdultFreeBaggage'] ?? [];
+            $child  = $cd['ChildFreeBaggage'] ?? [];
+            $infant = $cd['InfantFreeBaggage'] ?? [];
+
+            $baggageRows[] = [
+                'flight_class_id' => $classId,
+                'adult_weight'    => $adult['CheckedBaggageTotalWeight'] ?? 0,
+                'adult_pieces'    => $adult['CheckedBaggageQuantity'] ?? 0,
+                'child_weight'    => $child['CheckedBaggageTotalWeight'] ?? 0,
+                'child_pieces'    => $child['CheckedBaggageQuantity'] ?? 0,
+                'infant_weight'   => $infant['CheckedBaggageTotalWeight'] ?? 0,
+                'infant_pieces'   => $infant['CheckedBaggageQuantity'] ?? 0,
+            ];
+
+            foreach (['adult' => 'Adult_Fare', 'child' => 'Child_Fare', 'infant' => 'Infant_Fare'] as $type => $fareKey) {
+                $taxRows[] = [
+                    'flight_class_id' => $classId,
+                    'passenger_type'  => $type,
+                    'YQ'              => (float) ($fare[$fareKey]['Tax'] ?? 0),
+                    'HL'              => null,
+                    'I6'              => null,
+                    'LP'              => null,
+                    'V0'              => null,
+                ];
             }
 
-            // Create/Update Flight
-            $departureDateTime = Carbon::parse($flightData['DepartureDateTime']);
+            $ruleDeleteIds[] = $classId;
 
-            $flight = Flight::updateOrCreate(
-                [
-                    'airline_active_route_id' => $route->id,
-                    'flight_number' => $flightData['FlightNumber'],
-                    'departure_datetime' => $departureDateTime,
-                    'iata'=>  $flightData['Airline'],
-                ],
-                [
-                    'updated_at' => now(),
-                    'missing_count' => 0,
-                ]
-            );
+            $persianPolicy = collect($cd['CancelationPolicyList'] ?? [])->firstWhere('Culture', 'fa-IR');
+            if ($persianPolicy && ! empty($persianPolicy['Text'])) {
+                foreach (explode("\r\n", $persianPolicy['Text']) as $line) {
+                    $line = trim($line);
+                    if (empty($line)) continue;
 
-            $isNewFlight = $flight->wasRecentlyCreated;
-
-            // Create/Update FlightDetail
-            FlightDetail::updateOrCreate(
-                ['flight_id' => $flight->id],
-                [
-                    'arrival_datetime' => isset($flightData['ArrivalDateTime'])
-                        ? Carbon::parse($flightData['ArrivalDateTime'])
-                        : null,
-                    'aircraft_code' => $flightData['Aircraft'] ?? null,
-                    'aircraft_type_code' => $flightData['Aircraft'] ?? null,
-                    'updated_at' => now(),
-                ]
-            );
-
-            $hasChanges = false;
-
-            // Process all flight classes
-            if (isset($flightData['FlightClassList']) && is_array($flightData['FlightClassList'])) {
-                foreach ($flightData['FlightClassList'] as $classData) {
-                    $changed = $this->saveCompleteFlightClass($flight, $classData);
-                    if ($changed) {
-                        $hasChanges = true;
+                    $pct = null;
+                    if (preg_match('/(\d+)\s*درصد/', $line, $m)) {
+                        $pct = (int) $m[1];
                     }
+
+                    $ruleInsertRows[] = [
+                        'flight_class_id'    => $classId,
+                        'rules'              => $line,
+                        'penalty_percentage' => $pct,
+                    ];
                 }
             }
-
-            DB::commit();
-
-            $stats['checked']++;
-            if ($isNewFlight || $hasChanges) {
-                $stats['updated']++;
-            } else {
-                $stats['skipped']++;
-            }
-
-        } catch (\Exception $e) {
-            DB::rollBack();
-            $stats['errors']++;
-
-            Log::error('Sepehr processFlightData error', [
-                'flight_no' => $flightData['FlightNumber'] ?? 'unknown',
-                'error' => $e->getMessage(),
-            ]);
         }
+
+        // ── BULK UPSERT related (از BulkUpsertHelper) ──
+        $this->bulkUpsertBreakdown($breakdownRows);  // بدون نیاز به unique constraint
+        $this->bulkUpsertBaggage($baggageRows);       // بدون نیاز به unique constraint
+        $this->bulkUpsertTax($taxRows);               // بدون نیاز به unique constraint
+        $this->bulkReplaceRules($ruleDeleteIds, $ruleInsertRows); // یک DELETE + bulk INSERT
     }
 
-    /**
-     * Save FlightClass with ALL related data (Fare, Baggage, Rules)
-     *
-     * This is different from Nira - we don't need a Job!
-     */
-    protected function saveCompleteFlightClass(Flight $flight, array $classData): bool
+    // ─────────────────────────────────────────────
+    // HELPER QUERIES
+    // ─────────────────────────────────────────────
+
+    protected function findExistingFlights(array $flightKeys): array
     {
-        $classCode = $classData['BookingCode'];
-        $availableSeats = $classData['AvailableSeat'] ?? 0;
+        if (empty($flightKeys)) return [];
 
-        // Determine status
-        $status = 'active';
-        if ($availableSeats <= 0) {
-            $status = 'full';
-        }
-
-        // Extract Adult fare (Sepehr always provides OnewayFare)
-        $adultFare = $classData['OnewayFare']['Adult_Fare'] ?? [];
-
-        // Create/Update FlightClass
-        $flightClass = FlightClass::updateOrCreate(
-            [
-                'flight_id' => $flight->id,
-                'class_code' => $classCode,
-            ],
-            [
-                'payable_adult' => (float) ($adultFare['Payable'] ?? 0),
-                'payable_child' => (float) ($classData['OnewayFare']['Child_Fare']['Payable'] ?? 0),
-                'payable_infant' => (float) ($classData['OnewayFare']['Infant_Fare']['Payable'] ?? 0),
-                'available_seats' => $availableSeats,
-                'status' => $status,
-                'updated_at' => now(),
-            ]
-        );
-
-        $wasChanged = $flightClass->wasRecentlyCreated || $flightClass->wasChanged();
-
-        // Save Fare Breakdown
-        $this->saveFareBreakdown($flightClass, $classData['OnewayFare']);
-
-        // Save Baggage
-        $this->saveBaggage($flightClass, $classData);
-
-        $this->saveRules($flightClass, $classData['CancelationPolicyList'] ?? []);
-
-        $this->saveTax($flightClass, $classData['OnewayFare']);
-
-        return $wasChanged;
+        return Flight::selectRaw("CONCAT(airline_active_route_id, '|', flight_number, '|', departure_datetime) as fkey, id")
+            ->whereRaw(
+                "CONCAT(airline_active_route_id, '|', flight_number, '|', departure_datetime) IN (" .
+                implode(',', array_fill(0, count($flightKeys), '?')) . ')',
+                $flightKeys
+            )
+            ->pluck('id', 'fkey')
+            ->all();
     }
 
-    protected function saveFareBreakdown(FlightClass $flightClass, array $fareData): void
+    protected function fetchFlightIds(array $flightKeys): array
     {
-        FlightFareBreakdown::updateOrCreate(
-            ['flight_class_id' => $flightClass->id],
-            [
-                'base_adult' => (float) ($fareData['Adult_Fare']['BaseFare'] ?? 0),
-                'base_child' => (float) ($fareData['Child_Fare']['BaseFare'] ?? 0),
-                'base_infant' => (float) ($fareData['Infant_Fare']['BaseFare'] ?? 0),
-                'updated_at' => now(),
-            ]
-        );
+        return $this->findExistingFlights($flightKeys);
     }
 
-    protected function saveTax(FlightClass $flightClass, array $fareData): void
+    protected function fetchClassIds(array $classExtras): array
     {
-        $passengers = [
-            'adult' => 'Adult_Fare',
-            'child' => 'Child_Fare',
-            'infant' => 'Infant_Fare',
-        ];
+        if (empty($classExtras)) return [];
 
-        foreach ($passengers as $type => $fareKey) {
-            FlightTax::updateOrCreate(
-                [
-                    'flight_class_id' => $flightClass->id,
-                    'passenger_type' => $type,
-                ],
-                [
-                    'YQ' => (float) ($fareData[$fareKey]['Tax'] ?? 0),
-                ]
-            );
-        }
-    }
+        $pairs = collect($classExtras)
+            ->map(fn($e) => "(flight_id = {$e['flight_id']} AND class_code = '" . addslashes($e['class_code']) . "')")
+            ->join(' OR ');
 
-    protected function saveBaggage(FlightClass $flightClass, array $classData): void
-    {
-        $adultBaggage = $classData['AdultFreeBaggage'] ?? [];
-        $childBaggage = $classData['ChildFreeBaggage'] ?? [];
-        $infantBaggage = $classData['InfantFreeBaggage'] ?? [];
-
-        FlightBaggage::updateOrCreate(
-            ['flight_class_id' => $flightClass->id],
-            [
-                'adult_weight' => $adultBaggage['CheckedBaggageTotalWeight'] ?? 0,
-                'adult_pieces' => $adultBaggage['CheckedBaggageQuantity'] ?? 0,
-                'child_weight' => $childBaggage['CheckedBaggageTotalWeight'] ?? 0,
-                'child_pieces' => $childBaggage['CheckedBaggageQuantity'] ?? 0,
-                'infant_weight' => $infantBaggage['CheckedBaggageTotalWeight'] ?? 0,
-                'infant_pieces' => $infantBaggage['CheckedBaggageQuantity'] ?? 0,
-            ]
-        );
-    }
-
-    protected function saveRules(FlightClass $flightClass, array $policyList): void
-    {
-        // Delete old rules
-        FlightRule::where('flight_class_id', $flightClass->id)->delete();
-
-        if (empty($policyList)) {
-            return;
-        }
-
-        // Find Persian (fa-IR) policy
-        $persianPolicy = collect($policyList)->firstWhere('Culture', 'fa-IR');
-
-        if (! $persianPolicy || empty($persianPolicy['Text'])) {
-            return;
-        }
-
-
-        $rulesText = $persianPolicy['Text'];
-        $lines = explode("\r\n", $rulesText);
-
-        foreach ($lines as $line) {
-            $line = trim($line);
-            if (empty($line)) {
-                continue;
-            }
-
-            // Extract percentage (e.g., "30 درصد" -> 30)
-            $percentage = null;
-            if (preg_match('/(\d+)\s*درصد/', $line, $matches)) {
-                $percentage = (int) $matches[1];
-            }
-
-            FlightRule::create([
-                'flight_class_id' => $flightClass->id,
-                'rules' => $line,
-                'penalty_percentage' => $percentage,
-            ]);
-        }
+        return FlightClass::selectRaw("CONCAT(flight_id, '|', class_code) as ckey, id")
+            ->whereRaw($pairs)
+            ->pluck('id', 'ckey')
+            ->all();
     }
 
     protected function getDateRangeForPeriod(int $period): array
     {
         $ranges = [
-            3 => [0, 3],
-            7 => [4, 7],
-            30 => [8, 30],
-            60 => [31, 60],
-            90 => [61, 90],
+            3   => [0, 3],
+            7   => [4, 7],
+            30  => [8, 30],
+            60  => [31, 60],
+            90  => [61, 90],
             120 => [91, 120],
         ];
 
         [$start, $end] = $ranges[$period] ?? [0, 3];
 
-        $startDate = now()->addDays($start)->format('Y-m-d');
-        $endDate = now()->addDays($end)->format('Y-m-d');
-
-        return [$startDate, $endDate];
+        return [
+            now()->addDays($start)->format('Y-m-d'),
+            now()->addDays($end)->format('Y-m-d'),
+        ];
     }
 }

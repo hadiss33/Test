@@ -4,274 +4,312 @@ namespace App\Services\FlightUpdaters;
 
 use App\Models\AirlineActiveRoute;
 use App\Models\Flight;
-use App\Models\FlightBaggage;
 use App\Models\FlightClass;
 use App\Models\FlightDetail;
-use App\Models\FlightFareBreakdown;
 use App\Services\FlightProviders\FlightProviderInterface;
 use Carbon\Carbon;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
-/**
- * Ravis Flight Updater
- *
- * Uses 1-step process:
- * - ravisFlightList - Returns complete flight data including:
- *   - Flight details (number, times, aircraft)
- *   - Class with fares (Adult, Child, Infant)
- *   - Baggage info
- *
- * NO Jobs needed - all data comes in one API call!
- */
 class RavisFlightUpdater implements FlightUpdaterInterface
 {
+    use BulkUpsertHelper;
+
     protected FlightProviderInterface $provider;
     protected ?string $iata;
     protected string $service;
 
+    private const BATCH_SIZE = 100;
+
     public function __construct(FlightProviderInterface $provider, ?string $iata, string $service = 'ravis')
     {
         $this->provider = $provider;
-        $this->iata = $iata;
-        $this->service = $service;
+        $this->iata     = $iata;
+        $this->service  = $service;
     }
 
     public function updateByPeriod(int $period): array
     {
         $stats = [
-            'checked' => 0,
-            'updated' => 0,
-            'skipped' => 0,
-            'errors' => 0,
+            'checked'          => 0,
+            'updated'          => 0,
+            'skipped'          => 0,
+            'errors'           => 0,
             'routes_processed' => 0,
-            'flights_found' => 0,
-            'jobs_dispatched' => 0,  
+            'flights_found'    => 0,
+            'jobs_dispatched'  => 0,
         ];
 
         $fullConfig = $this->provider->getConfig();
 
         $query = AirlineActiveRoute::where('application_interfaces_id', $fullConfig['id'] ?? null);
-
         if ($this->iata) {
             $query->where('iata', $this->iata);
         }
-
         $routes = $query->get();
 
         if ($routes->isEmpty()) {
-            Log::warning('No routes found for Ravis service', [
-                'iata' => $this->iata,
-            ]);
+            Log::warning('No routes found for Ravis service', ['iata' => $this->iata]);
             return $stats;
         }
 
         $stats['routes_processed'] = $routes->count();
-
-        [$startDate, $endDate] = $this->getDateRangeForPeriod($period);
+        [$startDate, $endDate]     = $this->getDateRangeForPeriod($period);
 
         try {
             $flightsList = $this->provider->getCharterFlights($startDate, $endDate);
 
             if (empty($flightsList)) {
-                Log::warning('Ravis ravisFlightList returned no flights', [
-                    'period' => $period,
-                    'from' => $startDate,
-                    'to' => $endDate,
-                    'iata' => $this->iata,
-                ]);
                 return $stats;
             }
 
             $stats['flights_found'] = count($flightsList);
 
             if ($this->iata) {
-                $flightsList = array_filter($flightsList, function($flight) {
-                    return ($flight['AirlineCode'] ?? '') === $this->iata;
-                });
+                $flightsList = array_values(array_filter(
+                    $flightsList,
+                    fn($f) => ($f['AirlineCode'] ?? '') === $this->iata
+                ));
             }
 
-            foreach ($flightsList as $flightData) {
-                $this->processFlightData($flightData, $routes, $stats);
+            // ─── فاز ۱: جمع‌آوری ───
+            $collected = $this->collectAllData($flightsList, $routes);
+
+            if (empty($collected['flights'])) {
+                return $stats;
             }
 
-            Log::info("Ravis update completed - Period {$period}", $stats);
+            // ─── فاز ۲: Bulk save ───
+            $this->bulkSaveAll($collected, $stats);
 
         } catch (\Exception $e) {
             $stats['errors']++;
             Log::error('Ravis updateByPeriod failed', [
                 'period' => $period,
-                'iata' => $this->iata,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
+                'iata'   => $this->iata,
+                'error'  => $e->getMessage(),
             ]);
         }
 
         return $stats;
     }
 
-    protected function processFlightData(array $flightData, $routes, array &$stats): void
+    // ─────────────────────────────────────────────
+    // فاز ۱: جمع‌آوری — بدون هیچ DB call
+    // ─────────────────────────────────────────────
+
+    protected function collectAllData(array $flightsList, $routes): array
     {
-        DB::beginTransaction();
+        $flightRows   = [];
+        $detailRows   = [];
+        $classDataMap = [];
 
-        try {
-            if (empty($flightData['Reservable'])) {
-                DB::rollBack();
-                return;
-            }
+        $routeMap = $routes->keyBy(fn($r) => $r->origin . '|' . $r->destination);
 
-            $origin = $flightData['IataCodSource'];
-            $destination = $flightData['IataCodDestinate'];
-            $airlineCode = $flightData['AirlineCode'];
+        foreach ($flightsList as $fd) {
+            if (empty($fd['Reservable'])) continue;
 
-            $route = $routes->first(function ($r) use ($origin, $destination, $airlineCode) {
-                return $r->origin === $origin 
-                    && $r->destination === $destination; 
-            });
+            $origin      = $fd['IataCodSource'] ?? null;
+            $destination = $fd['IataCodDestinate'] ?? null;
+            if (! $origin || ! $destination) continue;
 
-            if (!$route) {
-                Log::debug('Ravis flight route not in active routes', [
-                    'origin' => $origin,
-                    'destination' => $destination,
-                    'airline' => $airlineCode,
-                    'flight_no' => $flightData['FlightNo'] ?? 'unknown',
-                ]);
-                DB::rollBack();
-                return;
-            }
+            $route = $routeMap->get($origin . '|' . $destination);
+            if (! $route) continue;
 
-            $departureDateTime = Carbon::parse($flightData['FlightDateTime']);
+            $depDt     = Carbon::parse($fd['FlightDateTime'])->format('Y-m-d H:i:s');
+            $flightKey = $route->id . '|' . $fd['FlightNo'] . '|' . $depDt;
 
-            $flight = Flight::updateOrCreate(
-                [
-                    'airline_active_route_id' => $route->id,
-                    'flight_number' => $flightData['FlightNo'],
-                    'departure_datetime' => $departureDateTime,
-                    'iata'=> $flightData['AirlineCode']
-                ],
-                [
-                    'updated_at' => now(),
-                    'missing_count' => 0,
-                ]
+            $flightRows[$flightKey] = [
+                'airline_active_route_id' => $route->id,
+                'flight_number'           => $fd['FlightNo'],
+                'departure_datetime'      => $depDt,
+                'iata'                    => $fd['AirlineCode'],
+                'missing_count'           => 0,
+                'updated_at'              => now()->format('Y-m-d H:i:s'),
+            ];
+
+            $arrivalDt = $this->calculateArrivalTime(
+                Carbon::parse($fd['FlightDateTime']),
+                $fd['ArrivalTime'] ?? null
             );
 
-            $isNewFlight = $flight->wasRecentlyCreated;
+            $detailRows[$flightKey] = [
+                'arrival_datetime'   => $arrivalDt?->format('Y-m-d H:i:s'),
+                'aircraft_code'      => $fd['AirPlaneName'] ?? null,
+                'aircraft_type_code' => $fd['AirPlaneName'] ?? null,
+                'updated_at'         => now()->format('Y-m-d H:i:s'),
+            ];
 
-            $arrivalDateTime = $this->calculateArrivalTime(
-                $departureDateTime,
-                $flightData['ArrivalTime'] ?? null
+            $classDataMap[$flightKey] = $fd;
+        }
+
+        return [
+            'flights'   => $flightRows,
+            'details'   => $detailRows,
+            'classData' => $classDataMap,
+        ];
+    }
+
+    // ─────────────────────────────────────────────
+    // فاز ۲: Bulk Save
+    // ─────────────────────────────────────────────
+
+    protected function bulkSaveAll(array $collected, array &$stats): void
+    {
+        $flightKeys   = array_keys($collected['flights']);
+        $flightRows   = array_values($collected['flights']);
+        $detailRows   = $collected['details'];
+        $classDataMap = $collected['classData'];
+
+        $existingMap = $this->findExistingFlights($flightKeys);
+
+        // ── BULK UPSERT FLIGHTS ──
+        foreach (array_chunk($flightRows, self::BATCH_SIZE) as $batch) {
+            Flight::upsert(
+                $batch,
+                ['airline_active_route_id', 'flight_number', 'departure_datetime'],
+                ['iata', 'missing_count', 'updated_at']
             );
+        }
 
-            FlightDetail::updateOrCreate(
-                ['flight_id' => $flight->id],
-                [
-                    'arrival_datetime' => $arrivalDateTime,
-                    'aircraft_code' => $flightData['AirPlaneName'] ?? null,
-                    'aircraft_type_code' => $flightData['AirPlaneName'] ?? null,
-                    'updated_at' => now(),
-                ]
-            );
+        $flightIdMap = $this->fetchFlightIds($flightKeys);
 
-            $hasChanges = $this->saveCompleteFlightClass($flight, $flightData);
+        $detailBulk  = [];
+        $classBulk   = [];
+        $classExtras = [];
 
-            DB::commit();
+        foreach ($flightKeys as $fk) {
+            $flightId = $flightIdMap[$fk] ?? null;
+            if (! $flightId) continue;
 
+            $isNew = ! isset($existingMap[$fk]);
             $stats['checked']++;
-            if ($isNewFlight || $hasChanges) {
-                $stats['updated']++;
-            } else {
-                $stats['skipped']++;
-            }
+            $isNew ? $stats['updated']++ : $stats['skipped']++;
 
-        } catch (\Exception $e) {
-            DB::rollBack();
-            $stats['errors']++;
+            $detailBulk[] = array_merge(['flight_id' => $flightId], $detailRows[$fk]);
 
-            Log::error('Ravis processFlightData error', [
-                'flight_no' => $flightData['FlightNo'] ?? 'unknown',
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
-        }
-    }
+            $fd          = $classDataMap[$fk];
+            $classCode   = $fd['Class'] ?? 'Y';
+            $seats       = (int) ($fd['CapLast'] ?? 0);
+            $adultTotal  = (float) ($fd['PriceView'] ?? 0);
+            $childTotal  = (float) ($fd['PriceCHD'] ?? $adultTotal);
+            $infantTotal = (float) ($fd['PriceINF'] ?? 0);
 
+            $status = 'active';
+            if ($seats <= 0)                      $status = 'full';
+            if (($fd['Reservable'] ?? 1) === 0)   $status = 'closed';
 
-    protected function saveCompleteFlightClass(Flight $flight, array $flightData): bool
-    {
-        $classCode = $flightData['Class'] ?? 'Y';
-        $availableSeats = $flightData['CapLast'] ?? 0;
+            $classBulk[] = [
+                'flight_id'       => $flightId,
+                'class_code'      => $classCode,
+                'payable_adult'   => $adultTotal,
+                'payable_child'   => $childTotal,
+                'payable_infant'  => $infantTotal,
+                'available_seats' => $seats,
+                'status'          => $status,
+                'updated_at'      => now()->format('Y-m-d H:i:s'),
+            ];
 
-        $status = 'active';
-        if ($availableSeats <= 0) {
-            $status = 'full';
-        }
-        if ($flightData['Reservable'] === 0) {
-            $status = 'closed';
-        }
-
-        $adultTotal = (float) ($flightData['PriceView'] ?? 0);
-        $childTotal = (float) ($flightData['PriceCHD'] ?? $adultTotal);
-        $infantTotal = (float) ($flightData['PriceINF'] ?? 0);
-
-        $flightClass = FlightClass::updateOrCreate(
-            [
-                'flight_id' => $flight->id,
+            $classExtras[] = [
+                'flight_id'  => $flightId,
                 'class_code' => $classCode,
-            ],
-            [
-                'payable_adult' => $adultTotal,
-                'payable_child' => $childTotal,
-                'payable_infant' => $infantTotal,
-                'available_seats' => $availableSeats,
-                'status' => $status,
-                'updated_at' => now(),
-            ]
-        );
+                'fd'         => $fd,
+            ];
+        }
 
-        $wasChanged = $flightClass->wasRecentlyCreated || $flightClass->wasChanged();
+        // ── BULK UPSERT DETAILS ──
+        foreach (array_chunk($detailBulk, self::BATCH_SIZE) as $batch) {
+            FlightDetail::upsert(
+                $batch,
+                ['flight_id'],
+                ['arrival_datetime', 'aircraft_code', 'aircraft_type_code', 'updated_at']
+            );
+        }
 
-        $this->saveFareBreakdown($flightClass, $flightData);
+        // ── BULK UPSERT CLASSES ──
+        foreach (array_chunk($classBulk, self::BATCH_SIZE) as $batch) {
+            FlightClass::upsert(
+                $batch,
+                ['flight_id', 'class_code'],
+                ['payable_adult', 'payable_child', 'payable_infant', 'available_seats', 'status', 'updated_at']
+            );
+        }
 
-        $this->saveBaggage($flightClass, $flightData);
+        // ── بگیر IDs کلاس‌ها ──
+        $classIdMap    = $this->fetchClassIds($classExtras);
+        $breakdownRows = [];
+        $baggageRows   = [];
 
-        return $wasChanged;
+        foreach ($classExtras as $extra) {
+            $ckey    = $extra['flight_id'] . '|' . $extra['class_code'];
+            $classId = $classIdMap[$ckey] ?? null;
+            if (! $classId) continue;
+
+            $fd          = $extra['fd'];
+            $adultTotal  = (float) ($fd['PriceView'] ?? 0);
+            $childTotal  = (float) ($fd['PriceCHD'] ?? $adultTotal);
+            $infantTotal = (float) ($fd['PriceINF'] ?? 0);
+            $adultSrv    = (float) ($fd['SrvPriceFinal'] ?? 0);
+            $childSrv    = (float) ($fd['SrvPriceFinalCHD'] ?? 0);
+
+            $breakdownRows[] = [
+                'flight_class_id' => $classId,
+                'base_adult'      => $adultTotal - $adultSrv,
+                'base_child'      => $childTotal - $childSrv,
+                'base_infant'     => $infantTotal,
+                'updated_at'      => now()->format('Y-m-d H:i:s'),
+            ];
+
+            $baggageRows[] = [
+                'flight_class_id' => $classId,
+                'adult_weight'    => $this->parseBaggageWeight($fd['FreeBag'] ?? '0'),
+                'adult_pieces'    => 1,
+                'child_weight'    => 0,
+                'child_pieces'    => 0,
+                'infant_weight'   => 0,
+                'infant_pieces'   => 0,
+            ];
+        }
+
+        // ── BULK UPSERT RELATED (از trait — بدون نیاز به unique constraint) ──
+        $this->bulkUpsertBreakdown($breakdownRows);
+        $this->bulkUpsertBaggage($baggageRows);
     }
 
-    protected function saveFareBreakdown(FlightClass $flightClass, array $flightData): void
-    {
-        $adultSrv = (float) ($flightData['SrvPriceFinal'] ?? 0);
-        $childSrv = (float) ($flightData['SrvPriceFinalCHD'] ?? 0);
-        
-        $adultBase = (float) ($flightData['PriceView'] ?? 0) - $adultSrv;
-        $childBase = (float) ($flightData['PriceCHD'] ?? 0) - $childSrv;
-        $infantBase = (float) ($flightData['PriceINF'] ?? 0);
+    // ─────────────────────────────────────────────
+    // HELPER QUERIES
+    // ─────────────────────────────────────────────
 
-        FlightFareBreakdown::updateOrCreate(
-            ['flight_class_id' => $flightClass->id],
-            [
-                'base_adult' => $adultBase,
-                'base_child' => $childBase,
-                'base_infant' => $infantBase,
-                'updated_at' => now(),
-            ]
-        );
+    protected function findExistingFlights(array $flightKeys): array
+    {
+        if (empty($flightKeys)) return [];
+
+        return Flight::selectRaw("CONCAT(airline_active_route_id, '|', flight_number, '|', departure_datetime) as fkey, id")
+            ->whereRaw(
+                "CONCAT(airline_active_route_id, '|', flight_number, '|', departure_datetime) IN (" .
+                implode(',', array_fill(0, count($flightKeys), '?')) . ')',
+                $flightKeys
+            )
+            ->pluck('id', 'fkey')
+            ->all();
     }
 
-    protected function saveBaggage(FlightClass $flightClass, array $flightData): void
+    protected function fetchFlightIds(array $flightKeys): array
     {
-        $baggageWeight = $this->parseBaggageWeight($flightData['FreeBag'] ?? '0');
+        return $this->findExistingFlights($flightKeys);
+    }
 
-        FlightBaggage::updateOrCreate(
-            ['flight_class_id' => $flightClass->id],
-            [
-                'adult_weight' => $baggageWeight,
-                'adult_pieces' => 1,
-                'child_weight' => 0,
-                'child_pieces' => 0,
-                'infant_weight' => 0,
-                'infant_pieces' => 0,
-            ]
-        );
+    protected function fetchClassIds(array $classExtras): array
+    {
+        if (empty($classExtras)) return [];
+
+        $pairs = collect($classExtras)
+            ->map(fn($e) => "(flight_id = {$e['flight_id']} AND class_code = '" . addslashes($e['class_code']) . "')")
+            ->join(' OR ');
+
+        return FlightClass::selectRaw("CONCAT(flight_id, '|', class_code) as ckey, id")
+            ->whereRaw($pairs)
+            ->pluck('id', 'ckey')
+            ->all();
     }
 
     protected function parseBaggageWeight(string $baggage): int
@@ -284,27 +322,18 @@ class RavisFlightUpdater implements FlightUpdaterInterface
 
     protected function calculateArrivalTime(Carbon $departure, ?string $arrivalTime): ?Carbon
     {
-        if (!$arrivalTime) {
-            return null;
-        }
+        if (! $arrivalTime) return null;
 
         try {
             [$hour, $minute] = explode(':', $arrivalTime);
-            
-            $arrival = $departure->copy()
-                ->setTime((int) $hour, (int) $minute, 0);
-            
+            $arrival         = $departure->copy()->setTime((int) $hour, (int) $minute, 0);
+
             if ($arrival->lessThan($departure)) {
                 $arrival->addDay();
             }
-            
+
             return $arrival;
-            
         } catch (\Exception $e) {
-            Log::warning('Failed to parse arrival time', [
-                'arrival_time' => $arrivalTime,
-                'error' => $e->getMessage()
-            ]);
             return null;
         }
     }
@@ -312,19 +341,19 @@ class RavisFlightUpdater implements FlightUpdaterInterface
     protected function getDateRangeForPeriod(int $period): array
     {
         $ranges = [
-            3 => [0, 3],
-            7 => [4, 7],
-            30 => [8, 30],
-            60 => [31, 60],
-            90 => [61, 90],
+            3   => [0, 3],
+            7   => [4, 7],
+            30  => [8, 30],
+            60  => [31, 60],
+            90  => [61, 90],
             120 => [91, 120],
         ];
 
         [$start, $end] = $ranges[$period] ?? [0, 3];
 
-        $startDate = now()->addDays($start)->format('Y-m-d');
-        $endDate = now()->addDays($end)->format('Y-m-d');
-
-        return [$startDate, $endDate];
+        return [
+            now()->addDays($start)->format('Y-m-d'),
+            now()->addDays($end)->format('Y-m-d'),
+        ];
     }
 }
