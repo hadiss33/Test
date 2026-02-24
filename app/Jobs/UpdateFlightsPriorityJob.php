@@ -7,14 +7,14 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
-// use Illuminate\Support\Facades\Log;
 use App\Enums\ServiceProviderEnum;
+use App\Services\FlightUpdaters\NiraFlightUpdater;
 
 class UpdateFlightsPriorityJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    public $timeout = 600; // 10 minutes
+    public $timeout = 600;
     public $tries = 2;
     public $maxExceptions = 1;
 
@@ -24,15 +24,25 @@ class UpdateFlightsPriorityJob implements ShouldQueue
 
     public function __construct(int $priority, string $service = 'nira', ?string $airlineCode = null)
     {
-        $this->priority = $priority;
-        $this->service = $service;
+        $this->priority    = $priority;
+        $this->service     = $service;
         $this->airlineCode = $airlineCode;
-        $this->queue = 'queueJob';
+        $this->queue       = 'queueJob';
     }
 
     public function handle(): void
     {
         $repository = app(\App\Repositories\Contracts\FlightServiceRepositoryInterface::class);
+
+        $serviceEnum   = ServiceProviderEnum::from($this->service);
+        $providerClass = $serviceEnum->getProvider();
+        $updaterClass  = $serviceEnum->getUpdater();
+
+
+        if ($this->service === 'nira' && $updaterClass === NiraFlightUpdater::class) {
+            $this->handleNira($repository, $providerClass);
+            return;
+        }
 
         $airlines = $this->airlineCode
             ? [$repository->getServiceByCode($this->service, $this->airlineCode)]
@@ -40,62 +50,45 @@ class UpdateFlightsPriorityJob implements ShouldQueue
 
         $airlines = array_filter($airlines);
 
-        // Check if airlines list is empty
-        // if (empty($airlines)) {
-        //     Log::warning("No airlines found for priority update", [
-        //         'priority' => $this->priority,
-        //         'service' => $this->service,
-        //         'airline_code' => $this->airlineCode
-        //     ]);
-        //     return;
-        // }
-
-        // ✅ Get service-specific classes
-        $serviceEnum = ServiceProviderEnum::from($this->service);
-        $providerClass = $serviceEnum->getProvider();
-        $updaterClass = $serviceEnum->getUpdater(); // ← جدید
+        if (empty($airlines)) {
+            return;
+        }
 
         foreach ($airlines as $config) {
             try {
-                // Validate config structure
-                // if (!is_array($config) || !isset($config['code'])) {
-                    // Log::error("Invalid config structure for priority {$this->priority}", [
-                    //     'service' => $this->service,
-                    //     'config' => $config
-                    // ]);
-                //     continue;
-                // }
-
-                // Log::info("Starting priority {$this->priority} update for {$config['code']}", [
-                //     'service' => $this->service
-                // ]);
-
                 $provider = new $providerClass($config);
-
-                // ✅ Use Updater instead of FlightUpdateService
-                $updater = new $updaterClass($provider, $config['code'], $this->service);
-
-                $stats = $updater->updateByPeriod($this->priority);
-
-                // Log::info("Priority {$this->priority} update completed for {$config['code']}", $stats);
+                $updater  = new $updaterClass($provider, $config['code'] ?? null, $this->service);
+                $updater->updateByPeriod($this->priority);
             } catch (\Exception $e) {
-                $airlineCode = $config['code'] ?? 'unknown';
-                // Log::error("Priority update failed for {$airlineCode}: " . $e->getMessage(), [
-                //     'priority' => $this->priority,
-                //     'service' => $this->service,
-                //     'trace' => $e->getTraceAsString()
-                // ]);
+                // Log::error(...)
             }
+        }
+    }
+
+    protected function handleNira($repository, string $providerClass): void
+    {
+        $allConfigs = $this->airlineCode
+            ? array_filter([$repository->getServiceByCode($this->service, $this->airlineCode)])
+            : $repository->getActiveServices($this->service);
+
+        $allConfigs = array_values(array_filter($allConfigs));
+
+        if (empty($allConfigs)) {
+            return;
+        }
+
+        try {
+            $firstProvider = new $providerClass($allConfigs[0]);
+            $updater       = new NiraFlightUpdater($firstProvider, $allConfigs[0]['code'] ?? null, $this->service);
+            $updater->withAllConfigs($allConfigs);
+            $updater->updateByPeriod($this->priority);
+        } catch (\Exception $e) {
+            // Log::error(...)
         }
     }
 
     public function failed(\Throwable $exception): void
     {
-        // Log::error("UpdateFlightsPriorityJob failed", [
-        //     'priority' => $this->priority,
-        //     'service' => $this->service,
-        //     'airline' => $this->airlineCode,
-        //     'error' => $exception->getMessage()
-        // ]);
+        // Log::error(...)
     }
 }

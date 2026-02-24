@@ -4,7 +4,6 @@ namespace App\Repositories\ServiceRepositories;
 
 use App\Models\ApplicationInterface;
 use App\Repositories\Contracts\FlightServiceRepositoryInterface;
-use Illuminate\Support\Facades\Cache;
 
 class FlightServiceRepository implements FlightServiceRepositoryInterface
 {
@@ -17,7 +16,6 @@ class FlightServiceRepository implements FlightServiceRepositoryInterface
 
     public function getActiveServices(string $serviceName): array
     {
-        return Cache::remember("flight_services_{$serviceName}", 300, function () use ($serviceName) {
             return $this->model
                 ->active()
                 ->byType('api')
@@ -35,7 +33,6 @@ class FlightServiceRepository implements FlightServiceRepositoryInterface
                 })
                 ->values()
                 ->toArray();
-        });
     }
 
     public function getServiceByCode(string $serviceName, string $code): ?array
@@ -117,10 +114,6 @@ class FlightServiceRepository implements FlightServiceRepositoryInterface
         return $airlines[$iataCode] ?? "Airline {$iataCode}";
     }
 
-    public function clearCache(string $serviceName): void
-    {
-        Cache::forget("flight_services_{$serviceName}");
-    }
 
     public function getService(string $serviceName): ?array
     {

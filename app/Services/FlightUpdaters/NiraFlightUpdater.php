@@ -2,14 +2,13 @@
 
 namespace App\Services\FlightUpdaters;
 
-use App\Jobs\FetchFlightFareJob;
 use App\Models\AirlineActiveRoute;
 use App\Models\Flight;
 use App\Models\FlightClass;
 use App\Models\FlightDetail;
+use App\Jobs\FetchFlightFareJob;
 use App\Services\FlightProviders\FlightProviderInterface;
 use Carbon\Carbon;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Http\Client\Pool;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -20,340 +19,341 @@ class NiraFlightUpdater implements FlightUpdaterInterface
     protected ?string $iata;
     protected string $service;
 
-    private const FLIGHT_BATCH_SIZE = 100;
-    private const CLASS_BATCH_SIZE  = 200;
+
+    private const MAX_PER_URL = 2;
+
+    private const FLIGHT_BATCH = 100;
+    private const CLASS_BATCH  = 200;
+
+    protected array $allConfigs = [];
 
     public function __construct(FlightProviderInterface $provider, ?string $iata, string $service = 'nira')
     {
-        $this->provider = $provider;
-        $this->iata     = $iata;
-        $this->service  = $service;
+        $this->provider   = $provider;
+        $this->iata       = $iata;
+        $this->service    = $service;
+        $this->allConfigs = [$provider->getConfig()];
+    }
+
+
+    public function withAllConfigs(array $configs): static
+    {
+        $this->allConfigs = $configs;
+        return $this;
     }
 
     public function updateByPeriod(int $period): array
     {
         $stats = [
-            'checked'          => 0,
-            'updated'          => 0,
-            'skipped'          => 0,
-            'errors'           => 0,
             'routes_processed' => 0,
             'flights_found'    => 0,
-            'jobs_dispatched'  => 0,
+            'classes_updated'  => 0,
+            'new_classes'      => 0,
+            'fare_jobs'        => 0,
+            'errors'           => 0,
         ];
 
-        $fullConfig = $this->provider->getConfig();
+        $dates = $this->getDatesForPeriod($period);
 
-        $routes = AirlineActiveRoute::where('application_interfaces_id', $fullConfig['id'] ?? null)
-            ->with('applicationInterface')
-            ->get();
+        $tasksByUrl = $this->buildTasksGroupedByUrl($dates, $stats);
 
-        if ($routes->isEmpty()) {
+        if (empty($tasksByUrl)) {
             return $stats;
         }
 
-        $dates = $this->getDatesForPeriod($period);
-        $tasks = $this->prepareTasks($routes, $dates, $stats);
-        $this->processBatchRequests($tasks, $stats);
+        $chunks = $this->interleaveByUrl($tasksByUrl);
+        $availabilityResults = $this->fetchAllAvailability($chunks, $stats);
+
+        if (empty($availabilityResults)) {
+            return $stats;
+        }
+
+        $this->persist($availabilityResults, $stats);
 
         return $stats;
     }
 
-    protected function prepareTasks($routes, array $dates, array &$stats): array
+
+    protected function buildTasksGroupedByUrl(array $dates, array &$stats): array
     {
-        $tasks = [];
+        $tasksByUrl = [];
 
-        foreach ($routes as $route) {
-            $stats['routes_processed']++;
+        foreach ($this->allConfigs as $config) {
+            $routes = AirlineActiveRoute::where('application_interfaces_id', $config['id'] ?? null)
+                ->with('applicationInterface')
+                ->get();
 
-            foreach ($dates as $date) {
-                if (! $route->hasFlightOnDate($date)) {
-                    continue;
+            if ($routes->isEmpty()) {
+                continue;
+            }
+
+            $baseUrl = $config['base_url_ws1'];
+
+            foreach ($routes as $route) {
+                $stats['routes_processed']++;
+
+                foreach ($dates as $date) {
+                    if (! $route->hasFlightOnDate($date)) {
+                        continue;
+                    }
+
+                    $tasksByUrl[$baseUrl][] = [
+                        'route'  => $route,
+                        'date'   => $date,
+                        'config' => $config,
+                    ];
                 }
-
-                $tasks[] = [
-                    'route'        => $route,
-                    'date'         => $date,
-                    'request_data' => $this->provider->prepareAvailabilityRequestData(
-                        $route->origin,
-                        $route->destination,
-                        $date->format('Y-m-d')
-                    ),
-                ];
             }
         }
 
-        return $tasks;
+        return $tasksByUrl;
     }
 
-    protected function processBatchRequests(array $tasks, array &$stats): void
+
+    protected function interleaveByUrl(array $tasksByUrl): array
     {
-        foreach (array_chunk($tasks, 5) as $chunk) {
+        $urlGroups = array_values($tasksByUrl);
+        $maxLen    = max(array_map('count', $urlGroups));
+        $chunks    = [];
+
+        for ($i = 0; $i < $maxLen; $i += self::MAX_PER_URL) {
+            $chunk = [];
+
+            foreach ($urlGroups as $group) {
+                for ($j = 0; $j < self::MAX_PER_URL; $j++) {
+                    if (isset($group[$i + $j])) {
+                        $chunk[] = $group[$i + $j];
+                    }
+                }
+            }
+
+            if (! empty($chunk)) {
+                $chunks[] = $chunk;
+            }
+        }
+
+        return $chunks;
+    }
+
+
+    protected function fetchAllAvailability(array $chunks, array &$stats): array
+    {
+        $allResults = [];
+
+        foreach ($chunks as $chunk) {
             try {
                 $responses = Http::timeout(60)
                     ->withoutVerifying()
                     ->pool(function (Pool $pool) use ($chunk) {
-                        foreach ($chunk as $index => $task) {
-                            $req = $task['request_data'];
-                            $pool->as((string) $index)->get($req['url'], $req['query']);
+                        foreach ($chunk as $i => $task) {
+                            $config = $task['config'];
+
+                            $pool->as((string) $i)->get(
+                                $config['base_url_ws1'] . '/AvailabilityFareJS.jsp',
+                                [
+                                    'AirLine'       => $config['code'],
+                                    'cbSource'      => $task['route']->origin,
+                                    'cbTarget'      => $task['route']->destination,
+                                    'DepartureDate' => $task['date']->format('Y-m-d'),
+                                    'cbAdultQty'    => 1,
+                                    'cbChildQty'    => 0,
+                                    'cbInfantQty'   => 0,
+                                    'OfficeUser'    => $config['office_user'],
+                                    'OfficePass'    => $config['office_pass'],
+                                ]
+                            );
                         }
                     });
 
-                $allFlightRows = [];
-                $allDetailRows = [];
-                $taskFlightMap = [];
-
-                foreach ($responses as $index => $response) {
-                    $task = $chunk[$index];
+                foreach ($responses as $i => $response) {
+                    $task = $chunk[(int) $i];
 
                     if (! ($response instanceof \Illuminate\Http\Client\Response) || ! $response->successful()) {
                         $stats['errors']++;
                         continue;
                     }
 
-                    $flights = $response->json()['AvailableFlights'] ?? [];
-                    if (empty($flights)) continue;
+                    $raw     = $this->decodeNiraJson($response->body());
+                    $flights = $raw['AvailableFlights'] ?? [];
+
+                    if (empty($flights)) {
+                        continue;
+                    }
+
+                    $taskKey = $task['route']->id . '|' . $task['date']->format('Y-m-d');
 
                     $stats['flights_found'] += count($flights);
-                    $iata = $task['route']->applicationInterface->data['iata'] ?? $this->iata;
 
-                    foreach ($flights as $fd) {
-                        $depDt     = Carbon::parse($fd['DepartureDateTime'])->format('Y-m-d H:i:s');
-                        $flightKey = $task['route']->id . '|' . $fd['FlightNo'] . '|' . $depDt;
-
-                        $allFlightRows[$flightKey] = [
-                            'airline_active_route_id' => $task['route']->id,
-                            'flight_number'           => $fd['FlightNo'],
-                            'departure_datetime'      => $depDt,
-                            'iata'                    => $iata,
-                            'missing_count'           => 0,
-                            'updated_at'              => now()->format('Y-m-d H:i:s'),
-                        ];
-
-                        $allDetailRows[$flightKey] = [
-                            'arrival_datetime'   => isset($fd['ArrivalDateTime'])
-                                ? Carbon::parse($fd['ArrivalDateTime'])->format('Y-m-d H:i:s')
-                                : null,
-                            'aircraft_code'      => $fd['AircraftCode'] ?? null,
-                            'aircraft_type_code' => $fd['AircraftTypeCode'] ?? null,
-                            'updated_at'         => now()->format('Y-m-d H:i:s'),
-                        ];
-
-                        $taskFlightMap[$flightKey] = $fd['ClassesStatus'] ?? [];
-                    }
+                    $allResults[$taskKey] = [
+                        'route'   => $task['route'],
+                        'date'    => $task['date'],
+                        'iata'    => $task['config']['code'],
+                        'config'  => $task['config'],
+                        'flights' => $flights,
+                    ];
                 }
-
-                if (empty($allFlightRows)) {
-                    sleep(1);
-                    continue;
-                }
-
-                $this->processFlights($allFlightRows, $allDetailRows, $taskFlightMap, $stats);
 
             } catch (\Exception $e) {
                 $stats['errors']++;
-                Log::error('NiraFlightUpdater chunk failed', ['error' => $e->getMessage()]);
+                Log::error('NiraFlightUpdater: pool chunk failed', ['error' => $e->getMessage()]);
             }
 
-            sleep(1);
+            usleep(500_000); // 500ms
         }
+
+        return $allResults;
     }
 
-    protected function processFlights(
-        array $allFlightRows,
-        array $allDetailRows,
-        array $taskFlightMap,
-        array &$stats
-    ): void {
-        $flightKeys = array_keys($allFlightRows);
 
-        $existingFlightIds = $this->findExistingFlights($flightKeys);
-
-        $newFlightKeys      = [];
-        $existingFlightKeys = []; // [flightKey => flight_id]
-
-        foreach ($flightKeys as $key) {
-            if (isset($existingFlightIds[$key])) {
-                $existingFlightKeys[$key] = $existingFlightIds[$key];
-            } else {
-                $newFlightKeys[] = $key;
-            }
-        }
-
-        if (! empty($newFlightKeys)) {
-            $this->handleNewFlights($newFlightKeys, $allFlightRows, $allDetailRows, $taskFlightMap, $stats);
-        }
-
-        if (! empty($existingFlightKeys)) {
-            $this->handleExistingFlights($existingFlightKeys, $allDetailRows, $taskFlightMap, $stats);
-        }
-    }
-
-    protected function handleNewFlights(
-        array $newFlightKeys,
-        array $allFlightRows,
-        array $allDetailRows,
-        array $taskFlightMap,
-        array &$stats
-    ): void {
-        $flightRows = array_map(fn($k) => $allFlightRows[$k], $newFlightKeys);
-        foreach (array_chunk($flightRows, self::FLIGHT_BATCH_SIZE) as $batch) {
-            Flight::insert($batch);
-        }
-
-        $newFlightIds = $this->findExistingFlights($newFlightKeys);
-
+    protected function persist(array $availabilityResults, array &$stats): void
+    {
+        $flightRows = [];
         $detailRows = [];
         $classRows  = [];
 
-        foreach ($newFlightKeys as $key) {
-            $flightId = $newFlightIds[$key] ?? null;
-            if (! $flightId) continue;
+        foreach ($availabilityResults as $result) {
+            $route = $result['route'];
+            $iata  = $result['iata'];
 
-            $stats['checked']++;
-            $stats['updated']++;
+            foreach ($result['flights'] as $flight) {
+                $depDt     = Carbon::parse($flight['DepartureDateTime'])->format('Y-m-d H:i:s');
+                $flightKey = $route->id . '|' . $flight['FlightNo'] . '|' . $depDt;
 
-            $detailRows[] = array_merge(['flight_id' => $flightId], $allDetailRows[$key]);
+                if (! isset($flightRows[$flightKey])) {
+                    $flightRows[$flightKey] = [
+                        'airline_active_route_id' => $route->id,
+                        'flight_number'           => $flight['FlightNo'],
+                        'departure_datetime'      => $depDt,
+                        'iata'                    => $iata,
+                        'missing_count'           => 0,
+                        'updated_at'              => now()->format('Y-m-d H:i:s'),
+                    ];
 
-            foreach ($taskFlightMap[$key] as $classData) {
-                $cap       = $classData['Cap'];
-                $classCode = $classData['FlightClass'];
+                    $detailRows[$flightKey] = [
+                        'arrival_datetime'   => isset($flight['ArrivalDateTime'])
+                            ? Carbon::parse($flight['ArrivalDateTime'])->format('Y-m-d H:i:s')
+                            : null,
+                        'aircraft_code'      => $flight['AircraftCode']     ?? null,
+                        'aircraft_type_code' => $flight['AircraftTypeCode'] ?? null,
+                        'updated_at'         => now()->format('Y-m-d H:i:s'),
+                    ];
 
-                $classRows[] = [
-                    'flight_id'       => $flightId,
-                    'class_code'      => $classCode,
-                    'payable_adult'   => (float) ($classData['Price'] ?? 0),
-                    'payable_child'   => null,  
-                    'payable_infant'  => null,  
-                    'available_seats' => $this->provider->parseAvailableSeats($cap, $classCode),
-                    'status'          => $this->provider->determineStatus($cap),
-                    'updated_at'      => now()->format('Y-m-d H:i:s'),
-                ];
+                    $classRows[$flightKey] = [];
+                }
+
+                foreach ($flight['ClassesStatus'] as $classData) {
+                    $price     = $classData['Price'] ?? '-';
+                    $classCode = $classData['FlightClass'];
+
+                    if (! is_numeric($price) || $price === '-') {
+                        continue;
+                    }
+
+                    $classRows[$flightKey][$classCode] = [
+                        'class_code'      => $classCode,
+                        'available_seats' => $this->provider->parseAvailableSeats($classData['Cap'], $classCode),
+                        'status'          => $this->provider->determineStatus($classData['Cap']),
+                        'payable_adult'   => (float) $price,
+                        'updated_at'      => now()->format('Y-m-d H:i:s'),
+                    ];
+
+                    $stats['classes_updated']++;
+                }
             }
         }
 
-        foreach (array_chunk($detailRows, self::FLIGHT_BATCH_SIZE) as $batch) {
-            FlightDetail::insert($batch);
+        if (empty($flightRows)) {
+            return;
         }
 
-        foreach (array_chunk($classRows, self::CLASS_BATCH_SIZE) as $batch) {
-            FlightClass::insert($batch);
-        }
-
-        if (! empty($newFlightIds)) {
-            $newClasses = FlightClass::whereIn('flight_id', array_values($newFlightIds))->get();
-
-            foreach ($newClasses as $flightClass) {
-                FetchFlightFareJob::dispatch($flightClass);
-                $stats['jobs_dispatched']++;
-            }
-        }
-    }
-
-    protected function handleExistingFlights(
-        array $existingFlightKeys, // [flightKey => flight_id]
-        array $allDetailRows,
-        array $taskFlightMap,
-        array &$stats
-    ): void {
-        $flightIds = array_values($existingFlightKeys);
-        $now       = now()->format('Y-m-d H:i:s');
-
-        $idList = implode(',', array_map('intval', $flightIds));
-        DB::statement(
-            "UPDATE flights SET missing_count = 0, updated_at = ? WHERE id IN ({$idList})",
-            [$now]
-        );
-
-        $detailRows = [];
-        $classRows  = [];
-        $classCombosToProcess = [];
-
-        foreach ($existingFlightKeys as $key => $flightId) {
-            $stats['checked']++;
-            $stats['skipped']++;
-
-            $detailRows[] = array_merge(['flight_id' => $flightId], $allDetailRows[$key]);
-
-            foreach ($taskFlightMap[$key] as $classData) {
-                $cap       = $classData['Cap'];
-                $classCode = $classData['FlightClass'];
-
-                $classRows[] = [
-                    'flight_id'       => $flightId,
-                    'class_code'      => $classCode,
-                    'payable_adult'   => (float) ($classData['Price'] ?? 0),
-                    'available_seats' => $this->provider->parseAvailableSeats($cap, $classCode),
-                    'status'          => $this->provider->determineStatus($cap),
-                    'updated_at'      => $now,
-                ];
-
-                $classCombosToProcess[] = $flightId . '|' . $classCode;
-            }
-        }
-
-
-        $existingClasses = FlightClass::whereIn('flight_id', $flightIds)
-            ->selectRaw("CONCAT(flight_id, '|', class_code) as combo")
-            ->pluck('combo', 'combo')
-            ->toArray();
-
-        $newClassCombos = [];
-        $flightIdsWithNewClasses = [];
-
-        foreach ($classCombosToProcess as $combo) {
-            if (!isset($existingClasses[$combo])) {
-                $newClassCombos[] = $combo;
-                $flightIdsWithNewClasses[] = explode('|', $combo)[0];
-            }
-        }
-        $flightIdsWithNewClasses = array_unique($flightIdsWithNewClasses);
-
-        foreach (array_chunk($detailRows, self::FLIGHT_BATCH_SIZE) as $batch) {
-            FlightDetail::upsert(
+        foreach (array_chunk(array_values($flightRows), self::FLIGHT_BATCH) as $batch) {
+            Flight::upsert(
                 $batch,
-                ['flight_id'],
-                ['arrival_datetime', 'aircraft_code', 'aircraft_type_code', 'updated_at']
+                ['airline_active_route_id', 'flight_number', 'departure_datetime'],
+                ['iata', 'missing_count', 'updated_at']
             );
         }
 
-        foreach (array_chunk($classRows, self::CLASS_BATCH_SIZE) as $batch) {
+        $flightIdMap = $this->resolveFlightIds(array_keys($flightRows));
+
+        $detailBulk = [];
+        foreach ($flightIdMap as $fk => $flightId) {
+            if (isset($detailRows[$fk])) {
+                $detailBulk[] = array_merge(['flight_id' => $flightId], $detailRows[$fk]);
+            }
+        }
+        foreach (array_chunk($detailBulk, self::FLIGHT_BATCH) as $batch) {
+            FlightDetail::upsert($batch, ['flight_id'], ['arrival_datetime', 'aircraft_code', 'aircraft_type_code', 'updated_at']);
+        }
+
+        $existingClasses = $this->resolveExistingClasses($flightIdMap);
+        $classBulk       = [];
+        $newClassKeys    = [];
+
+        foreach ($flightIdMap as $fk => $flightId) {
+            foreach ($classRows[$fk] ?? [] as $classCode => $classData) {
+                $mapKey = $flightId . '|' . $classCode;
+                $isNew  = ! isset($existingClasses[$mapKey]);
+
+                $classBulk[] = array_merge(['flight_id' => $flightId], $classData);
+
+                if ($isNew) {
+                    $stats['new_classes']++;
+                    $newClassKeys[] = $mapKey;
+                }
+            }
+        }
+
+        foreach (array_chunk($classBulk, self::CLASS_BATCH) as $batch) {
             FlightClass::upsert(
                 $batch,
                 ['flight_id', 'class_code'],
-                ['payable_adult', 'available_seats', 'status', 'updated_at']
+                ['available_seats', 'status', 'payable_adult', 'updated_at']
+                // payable_child/infant اینجا نیستن — FetchFlightFareJob اونا رو پر می‌کنه
             );
         }
 
-        if (!empty($newClassCombos)) {
-            $fetchedNewClasses = FlightClass::whereIn('flight_id', $flightIdsWithNewClasses)->get();
 
-            foreach ($fetchedNewClasses as $cls) {
-                $combo = $cls->flight_id . '|' . $cls->class_code;
-                
-                if (in_array($combo, $newClassCombos)) {
-                    FetchFlightFareJob::dispatch($cls);
-                    $stats['jobs_dispatched']++;
+        if (! empty($newClassKeys)) {
+            $flightIds  = array_unique(array_map(fn($k) => (int) explode('|', $k)[0], $newClassKeys));
+            $newClasses = FlightClass::whereIn('flight_id', $flightIds)->get()
+                ->keyBy(fn($c) => $c->flight_id . '|' . $c->class_code);
+
+            foreach ($newClassKeys as $key) {
+                $flightClass = $newClasses->get($key);
+                if ($flightClass) {
+                    FetchFlightFareJob::dispatch($flightClass)->onQueue('snailJob');
+                    $stats['fare_jobs']++;
                 }
             }
         }
     }
 
-
-    protected function findExistingFlights(array $flightKeys): array
+    protected function resolveFlightIds(array $flightKeys): array
     {
         if (empty($flightKeys)) return [];
 
         return Flight::selectRaw(
-            "CONCAT(airline_active_route_id, '|', flight_number, '|', departure_datetime) as fkey, id"
+            "CONCAT(airline_active_route_id,'|',flight_number,'|',departure_datetime) as fkey, id"
         )
         ->whereRaw(
-            "CONCAT(airline_active_route_id, '|', flight_number, '|', departure_datetime) IN (" .
-            implode(',', array_fill(0, count($flightKeys), '?')) . ')',
+            "CONCAT(airline_active_route_id,'|',flight_number,'|',departure_datetime) IN ("
+            . implode(',', array_fill(0, count($flightKeys), '?')) . ')',
             $flightKeys
         )
         ->pluck('id', 'fkey')
         ->all();
+    }
+
+    protected function resolveExistingClasses(array $flightIdMap): array
+    {
+        $flightIds = array_values($flightIdMap);
+        if (empty($flightIds)) return [];
+
+        return FlightClass::whereIn('flight_id', $flightIds)
+            ->selectRaw("CONCAT(flight_id,'|',class_code) as ckey, id")
+            ->pluck('id', 'ckey')
+            ->all();
     }
 
     protected function getDatesForPeriod(int $period): array
@@ -375,5 +375,15 @@ class NiraFlightUpdater implements FlightUpdaterInterface
         }
 
         return $dates;
+    }
+
+    protected function decodeNiraJson(string $rawBody): ?array
+    {
+        if (! mb_check_encoding($rawBody, 'UTF-8')) {
+            $rawBody = @iconv('CP1256', 'UTF-8//IGNORE', $rawBody);
+        }
+        $rawBody = preg_replace('/[\x00-\x1F\x80-\xFF]/', '', $rawBody ?? '');
+
+        return json_decode($rawBody, true);
     }
 }
