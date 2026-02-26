@@ -6,29 +6,43 @@ use App\Jobs\UpdateFlightsPriorityJob;
 use App\Jobs\CheckMissingFlightsJob;
 use App\Jobs\SyncAirlineRoutesJob;
 
-
-$airlines = ['nira', 'sepehr', 'ravis'];
-
-$periods = [
-    3   => 'everyTwoMinutes',
-    7   => 'everyFiveMinutes',
-    30  => 'everyFifteenMinutes',
-    60  => 'everyThirtyMinutes',
-    90  => 'hourly',
-    120 => 'everyThreeHours',
+$providersPeriods = [
+    'nira' => [
+        3   => 'everyThreeMinutes',
+        7   => 'everyFifteenMinutes',
+        30  => 'everyThirtyMinutes',
+        60  => 'hourly',
+        90  => 'everyThreeHours',
+        120 => 'everySixHours',
+    ],
+    'sepehr' => [
+        3   => 'everyTenMinutes',
+        7   => 'everyFifteenMinutes',
+        30  => 'everyThirtyMinutes',
+        60  => 'hourly',
+        90  => 'everyThreeHours',
+        120 => 'everySixHours',
+    ],
+    'ravis' => [
+        3   => 'everyTenMinutes',
+        7   => 'everyFifteenMinutes',
+        30  => 'everyThirtyMinutes',
+        60  => 'hourly',
+        90  => 'everyThreeHours',
+        120 => 'everySixHours',
+    ]
 ];
 
-
-foreach ($airlines as $airline) {
-    Schedule::job(new SyncAirlineRoutesJob($airline))
-        ->dailyAt('07:32')
-        ->name("sync-airline-routes:$airline")
+foreach ($providersPeriods as $provider => $periods) {
+    Schedule::job(new SyncAirlineRoutesJob($provider))
+        ->dailyAt('01:30')
+        ->name("sync-airline-routes:$provider")
         ->withoutOverlapping()
         ->onOneServer();
 }
 
 Schedule::job(new CleanupOldFlightsJob)
-    ->dailyAt('01:00')
+    ->dailyAt('02:30')
     ->name('cleanup-old-flights')
     ->withoutOverlapping()
     ->onOneServer();
@@ -37,14 +51,23 @@ Schedule::job(new CheckMissingFlightsJob)
     ->everyTenMinutes()
     ->name('check-missing-flights')
     ->withoutOverlapping()
+    ->between('07:00', '23:59')
     ->onOneServer();
 
-foreach ($airlines as $airline) {
+foreach ($providersPeriods as $provider => $periods) {
     foreach ($periods as $period => $frequency) {
-        Schedule::job(new UpdateFlightsPriorityJob($period, $airline))
+        Schedule::job(new UpdateFlightsPriorityJob($period, $provider))
             ->{$frequency}()
-            ->name("update-flights:$airline:$period")
+            ->name("update-flights:$provider:$period")
             ->withoutOverlapping()
+            ->between('07:00', '23:59')
             ->onOneServer();
     }
 }
+
+Schedule::command('queue:work --queue=snailJob --stop-when-empty --tries=3 --timeout=600')
+    ->hourly()
+    ->name('snail-queue-worker')
+    ->withoutOverlapping()
+    ->between('07:00', '23:59')
+    ->onOneServer();
