@@ -22,7 +22,7 @@ class NiraProvider implements FlightProviderInterface
 
     public function getFlightsSchedule(string $fromDate, string $toDate): array
     {
-        $url = $this->config['base_url_ws1'].'/NRSCWS.jsp';
+        $url = $this->config['base_url_ws1'] . '/NRSCWS.jsp';
 
         try {
             $response = $this->client->get($url, [
@@ -39,9 +39,8 @@ class NiraProvider implements FlightProviderInterface
             $data = json_decode($response->getBody()->getContents(), true);
 
             return $data['NRSFlights'] ?? [];
-
         } catch (\Exception $e) {
-            Log::error("Nira Schedule Error [{$this->config['code']}]: ".$e->getMessage());
+            Log::error("Nira Schedule Error [{$this->config['code']}]: " . $e->getMessage());
 
             return [];
         }
@@ -49,7 +48,7 @@ class NiraProvider implements FlightProviderInterface
 
     public function getAvailabilityFare(string $origin, string $destination, string $date): array
     {
-        $url = $this->config['base_url_ws1'].'/AvailabilityFareJS.jsp';
+        $url = $this->config['base_url_ws1'] . '/AvailabilityFareJS.jsp';
 
         try {
             $response = $this->client->get($url, [
@@ -69,9 +68,8 @@ class NiraProvider implements FlightProviderInterface
             $data = json_decode($response->getBody()->getContents(), true);
 
             return $data['AvailableFlights'] ?? [];
-
         } catch (\Exception $e) {
-            Log::error("Nira Availability Error [{$this->config['code']}]: ".$e->getMessage());
+            Log::error("Nira Availability Error [{$this->config['code']}]: " . $e->getMessage());
 
             return [];
         }
@@ -81,7 +79,7 @@ class NiraProvider implements FlightProviderInterface
     {
         $cacheKey = "fare:{$this->config['code']}:{$origin}-{$destination}:{$flightClass}:{$date}:{$flightNo}";
 
-        $url = $this->config['base_url_ws1'].'/FareJS.jsp';
+        $url = $this->config['base_url_ws1'] . '/FareJS.jsp';
 
         try {
             $response = $this->client->get($url, [
@@ -182,9 +180,8 @@ class NiraProvider implements FlightProviderInterface
             ];
 
             return $data;
-
         } catch (\Exception $e) {
-            Log::error("Nira Fare Error [{$this->config['code']}]: ".$e->getMessage(), [
+            Log::error("Nira Fare Error [{$this->config['code']}]: " . $e->getMessage(), [
                 'route' => "{$origin}-{$destination}",
                 'class' => $flightClass,
                 'date' => $date,
@@ -194,7 +191,6 @@ class NiraProvider implements FlightProviderInterface
 
             return null;
         }
-
     }
 
     public function parseAvailableSeats(string $cap, string $flightClass): int
@@ -253,7 +249,7 @@ class NiraProvider implements FlightProviderInterface
     public function prepareAvailabilityRequestData(string $origin, string $destination, string $date): array
     {
         return [
-            'url' => $this->config['base_url_ws1'].'/AvailabilityFareJS.jsp',
+            'url' => $this->config['base_url_ws1'] . '/AvailabilityFareJS.jsp',
             'query' => [
                 'AirLine' => $this->config['code'],
                 'cbSource' => $origin,

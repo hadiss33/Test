@@ -1,8 +1,9 @@
 <?php
 
 namespace App\Enums;
-use App\Services\FlightProviders\{NiraProvider , SepehrProvider , RavisProvider};
-use App\Services\FlightUpdaters\{NiraAnalyze , SepehrAnalyze , NiraFlightUpdater , SepehrFlightUpdater , RavisFlightUpdater , RavisAnalyze};
+
+use App\Services\FlightProviders\{NiraProvider, SepehrProvider, RavisProvider};
+use App\Services\FlightUpdaters\{NiraAnalyze, SepehrAnalyze, NiraFlightUpdater, SepehrFlightUpdater, RavisFlightUpdater, RavisAnalyze};
 
 
 enum ServiceProviderEnum: string
@@ -29,7 +30,7 @@ enum ServiceProviderEnum: string
         };
     }
 
-        public function getUpdater(): string
+    public function getUpdater(): string
     {
         return match ($this) {
             self::Nira => NiraFlightUpdater::class,
