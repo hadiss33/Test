@@ -5,6 +5,7 @@ use App\Jobs\CleanupOldFlightsJob;
 use App\Jobs\UpdateFlightsPriorityJob;
 use App\Jobs\CheckMissingFlightsJob;
 use App\Jobs\SyncAirlineRoutesJob;
+use App\Jobs\FlightStatusSyncJob;
 
 $providersPeriods = [
     'nira' => [
@@ -71,3 +72,12 @@ Schedule::command('queue:work --queue=snailJob --stop-when-empty --tries=3 --tim
     ->withoutOverlapping()
     ->between('07:00', '23:59')
     ->onOneServer();
+
+
+
+Schedule::job(new FlightStatusSyncJob)
+    ->hourly()
+    ->name('nira-status-sync')
+    ->withoutOverlapping()
+    ->between('07:00', '23:59')
+    ->hourly();

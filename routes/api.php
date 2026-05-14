@@ -6,6 +6,7 @@ use App\Http\Controllers\{
     RouteSyncController,
     FlightUpdateController,
     FlightSearchController,
+    FlightRangePriceController,
 };
 
 Route::prefix('routes')->group(function() {
@@ -19,10 +20,10 @@ Route::prefix('flights')->group(function() {
     
     Route::post('/check-missing', [FlightUpdateController::class, 'checkMissing']);
     
-    
-    Route::post('/check-missing', [FlightUpdateController::class, 'checkMissing']);
-
     Route::get('/advanced-search', [FlightSearchController::class, 'getAdvancedFlights']);
+    
+    Route::get('/price-range', [FlightRangePriceController::class, 'getRangeOfPrices']);
 
+    Route::get('/get-row', [FlightRangePriceController::class, 'getTheRow']);
     
 });

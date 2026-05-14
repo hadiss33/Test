@@ -22,12 +22,8 @@ return Application::configure(basePath: dirname(__DIR__))
     })
     ->withSchedule(function (Illuminate\Console\Scheduling\Schedule $schedule) {
         $schedule->command('test:schedule')->everyMinute();
-        $schedule->command('cache:clear-expired')->everyFiveMinutes();
 
-        $schedule->command('queue:work --queue=fastJob,queueJob,snailJob --sleep=3 --tries=3 --timeout=600 --stop-when-empty')
-            ->withoutOverlapping()
-            ->runInBackground()
-            ->everyMinute();
+        $schedule->command('cache:clear-expired')->everyFiveMinutes();
 
         $schedule->command('cache:backup-delete-flights')->dailyAt('00:00');
     })

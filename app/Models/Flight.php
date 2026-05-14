@@ -21,12 +21,22 @@ class Flight extends Model
         'updated_at',
         'api_request_at',
         'db_saved_at',
+        'is_open',
+        'flight_score',  // 0-100: اولویت‌بندی (NiraFlightScorer محاسبه می‌کند)
+        'next_check_at', // timestamp: زمان بعدی check (NULL = بسته یا irrelevant)
+
     ];
 
     protected $casts = [
         'departure_datetime' => 'datetime',
         'updated_at' => 'datetime',
+        'is_open' => 'boolean',
+        'flight_score' => 'integer',
+        'next_check_at' => 'datetime',
+
     ];
+
+    // ─── Relations ─────────────────────────────────────────────────
 
     public function route()
     {
@@ -48,7 +58,8 @@ class Flight extends Model
         return $this->hasOne(FlightDetail::class);
     }
 
-    // Helpers
+    // ─── Helpers ───────────────────────────────────────────────────
+
     public function getFlightDateAttribute(): string
     {
         return $this->departure_datetime->toDateString();
@@ -62,7 +73,6 @@ class Flight extends Model
     public function calculatePriority(): int
     {
         $days = $this->getDaysUntilDeparture();
-
         if ($days <= 3) {
             return 1;
         }
@@ -86,16 +96,11 @@ class Flight extends Model
         return $this->missing_count >= 2;
     }
 
+    // ─── Scopes ────────────────────────────────────────────────────
+
     public function scopeUpcoming($query)
     {
         return $query->where('departure_datetime', '>=', now());
-    }
-
-    public function scopeByPriority($query, int $priority)
-    {
-        $priorityCurrent = $this->calculatePriority();
-
-        return $query->where($priorityCurrent, $priority);
     }
 
     public function scopeOnDate($query, Carbon $date)
@@ -113,6 +118,21 @@ class Flight extends Model
         return $query->where('iata', $iata);
     }
 
+    public function scopeDueForNiraUpdate($query)
+    {
+        return $query
+            ->whereHas('route.applicationInterface', fn ($q) => $q->where('service', 'nira')->where('status', 1)
+            )
+            ->where('is_open', true)
+            ->where('departure_datetime', '>', now())
+            ->where(function ($q) {
+                $q->whereNull('next_check_at')
+                    ->orWhere('next_check_at', '<=', now());
+            });
+    }
+
+    // ─── Filters ───────────────────────────────────────────────────
+
     public const RELATION_MAP = [
         'Rule' => 'classes.rules',
         'FareBreakdown' => 'classes.fareBreakdown',
@@ -123,7 +143,6 @@ class Flight extends Model
 
     public function scopeFilter(Builder $query, array $filters): Builder
     {
-
         if (! empty($filters['datetime_start']) && ! empty($filters['datetime_end'])) {
             $query->whereDate('departure_datetime', '>=', $filters['datetime_start'])
                 ->whereDate('departure_datetime', '<=', $filters['datetime_end']);
@@ -144,6 +163,7 @@ class Flight extends Model
                 }
             });
         }
+
         if (! empty($filters['service'])) {
             $query->whereHas('route.applicationInterface', function ($q) use ($filters) {
                 $q->where('service', $filters['service']);
