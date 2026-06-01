@@ -6,6 +6,7 @@ use App\Services\OTA\Flights\Domain\Entities\V2\FlightCollection;
 
 interface RepositoryInterface
 {
+    
     public function searchByRouteAndDate(array $criteria): FlightCollection;
 
     public function lock(array $data): array;

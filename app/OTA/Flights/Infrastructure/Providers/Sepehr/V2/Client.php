@@ -19,12 +19,11 @@ final class Client
             'UserName' => $this->username,
             'Password' => md5($this->password),
         ], $payload);
-
         try {
             $response = Http::withHeaders([
                 'Accept-Encoding' => 'gzip, deflate',
-            ])->post($this->baseUrl . $endpoint, $param);
-
+                ])->post($this->baseUrl . $endpoint, $param);
+                
             return $response->json() ?? [];
 
         } catch (Throwable $e) {
