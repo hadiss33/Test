@@ -4,37 +4,36 @@ namespace App\Services\OTA\Flights\Domain\Enums;
 
 enum CabinType: string
 {
-    case ECONOMY = 'Economy';
-    case ECONOMY_PLUS = 'EconomyPlus';
-    case PREMIUM_ECONOMY = 'PremiumEconomy';
-    case BUSINESS = 'Business';
-    case FIRST = 'First';
-
-    public function toIata(): string
+    case Economy        = 'Economy';
+    case EconomyPlus    = 'EconomyPlus';
+    case PremiumEconomy = 'PremiumEconomy';
+    case Business       = 'Business';
+    case First          = 'First';
+ 
+    public function iata(): string
     {
-        return match ($this) {
-            self::ECONOMY => 'Y',
-            self::ECONOMY_PLUS => 'E',
-            self::PREMIUM_ECONOMY => 'P',
-            self::BUSINESS => 'C',
-            self::FIRST => 'F',
+        return match($this) {
+            self::Economy        => 'Y',
+            self::EconomyPlus    => 'E',
+            self::PremiumEconomy => 'P',
+            self::Business       => 'C',
+            self::First          => 'F',
         };
     }
-
-    public function toIataDetailed(): array
+ 
+    public function titleFa(): string
     {
-        return [
-            'iata' => $this->toIata(),
-            'title' => [
-                'fa' => match ($this) {
-                    self::ECONOMY => 'اکونومی',
-                    self::ECONOMY_PLUS => 'اکونومی پلاس',
-                    self::PREMIUM_ECONOMY => 'اکونومی ویژه',
-                    self::BUSINESS => 'بیزینس کلاس',
-                    self::FIRST => 'فرست کلاس',
-                },
-                'en' => $this->value,
-            ],
-        ];
+        return match($this) {
+            self::Economy        => 'اکونومی',
+            self::EconomyPlus    => 'اکونومی پلاس',
+            self::PremiumEconomy => 'اکونومی ویژه',
+            self::Business       => 'بیزینس کلاس',
+            self::First          => 'فرست کلاس',
+        };
+    }
+ 
+    public static function fromApiValue(string $value): self
+    {
+        return self::tryFrom($value) ?? self::Economy;
     }
 }

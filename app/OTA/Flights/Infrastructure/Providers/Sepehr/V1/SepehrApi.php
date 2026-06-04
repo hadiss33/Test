@@ -131,9 +131,9 @@ class SepehrApi
             'GetActiveRoutes' => '/api/Partners/Flight/Availability/V16/GetActiveRoutes', // دریافت باقی مانده اعتبار و همچنین مهلت پرداخت
 
             // Boking
-            'Lock' => '/api/Partners/Flight/Booking/V12/Lock', // قفل کردن ظرفیت و نرخ
-            'Book' => '/api/Partners/Flight/Booking/V12/Book', //  انجام قطعی رزرو
-            'ReleaseLock' => '/api/Partners/Flight/Booking/V12/ReleaseLock', // برای آزاد کردن قفل
+            'Lock' => '/api/Partners/Flight/Booking/V10/Lock', // قفل کردن ظرفیت و نرخ
+            'Book' => '/api/Partners/Flight/Booking/V10/Book', //  انجام قطعی رزرو
+            'ReleaseLock' => '/api/Partners/Flight/Booking/V9/ReleaseLock', // برای آزاد کردن قفل
 
             // Refund
             'RetriveBooking' => '/api/Partners/Flight/Refund/V3/RetrieveBooking', // بدست آوردن اطلاعات مسافران یک رزرو
@@ -146,7 +146,7 @@ class SepehrApi
             'ChangedSchedulePassengersWebservice' => '/api/Partners/ChangedSchedulePassengers/V1/Webservice/Get', // یست رزروهایی که تغییری در برنامه پروازی مسافران آنها داده شده است
 
             // Retrieve Booking
-            'BookGetStatus' => '/api/Partners/Flight/RetrieveBooking/V2/GetStatus', // زمانی که درخواست Book به سیستم سپهر ارسال نموده اید، ولی به هر دلیلی - مانند مشکلات شبکه و قطعی اینترنت - جوابی به درست شما نرسیده است، با فرخوانی این متد می توانید از وضعیت درخواست خود و اینکه آیا صادر شده است یا خیر اطلاعات کسب نمایید.
+            'BookGetStatus' => '/api/Partners/Flight/RetrieveBooking/V1/GetStatus', // زمانی که درخواست Book به سیستم سپهر ارسال نموده اید، ولی به هر دلیلی - مانند مشکلات شبکه و قطعی اینترنت - جوابی به درست شما نرسیده است، با فرخوانی این متد می توانید از وضعیت درخواست خود و اینکه آیا صادر شده است یا خیر اطلاعات کسب نمایید.
             'BookGetHistory' => '/api/Partners/Flight/RetrieveBooking/V1/GetHistory', // دریافت کلیه اطلاعات مربوط به یک رزرو
         ];
 
