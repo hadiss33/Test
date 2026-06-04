@@ -10,6 +10,10 @@ use App\Services\OTA\Flights\Application\DTOs\BalanceResult;
 use App\Services\OTA\Flights\Application\DTOs\BookFlightRequest;
 use App\Services\OTA\Flights\Application\DTOs\BookFlightResult;
 use App\Services\OTA\Flights\Application\DTOs\SearchFlightRequest;
+use App\Services\OTA\Flights\Application\DTOs\LockFlightRequest;
+use App\Services\OTA\Flights\Application\DTOs\LockFlightResult;
+use App\Services\OTA\Flights\Application\DTOs\BookStatusRequest;
+use App\Services\OTA\Flights\Application\DTOs\BookStatusResult;
 use App\Services\OTA\Flights\Application\DTOs\SearchFlightResult;
 use App\Services\OTA\Flights\Domain\Exceptions\CredentialNotFoundException;
 use App\Services\OTA\Flights\Domain\Exceptions\ProviderException;
@@ -19,9 +23,11 @@ use App\Services\OTA\Flights\Infrastructure\Providers\Sepehr\V2\Http\SepehrHttpC
 use App\Services\OTA\Flights\Infrastructure\Providers\Sepehr\V2\Mapper\SepehrFlightMapper;
 use App\Services\OTA\Flights\Infrastructure\Providers\Sepehr\V2\Repositories\SepehrActiveRouteRepository;
 use App\Services\OTA\Flights\Infrastructure\Providers\Sepehr\V2\Repositories\SepehrCredentialRepository;
+use App\Services\OTA\Flights\Infrastructure\Providers\Sepehr\V2\Repositories\AirportRepository;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Throwable;
+use Exception;
 
 class SepehrFlightLegency implements FlightProviderInterface
 {
@@ -32,6 +38,8 @@ class SepehrFlightLegency implements FlightProviderInterface
         private readonly SepehrCredentialRepository $credentialRepo,
         private readonly SepehrActiveRouteRepository $activeRouteRepo,
         private readonly SepehrFlightMapper         $flightMapper,
+        private readonly AirportRepository          $airportRepo,
+
     ) {}
 
     // ─── Search ──────────────────────────────────────────────────────────────────
@@ -39,11 +47,11 @@ class SepehrFlightLegency implements FlightProviderInterface
     public function search(SearchFlightRequest $request): SearchFlightResult
     {
         $credentials = $this->resolveCredentials($request->branch, $request->supplierIds);
-
-        $originId      = DB::table('airports')->select('id')->where('iata', $request->originIata)->first()?->id;
-        $destinationId = DB::table('airports')->select('id')->where('iata', $request->destinationIata)->first()?->id;
+        
+        $originId      = $this->airportRepo->getAirportId($request->originIata);
+        $destinationId = $this->airportRepo->getAirportId($request->destinationIata);
         $dayOfWeek     = strtolower(Carbon::parse($request->departureDate)->englishDayOfWeek);
-
+        
         $apiResults = [];
         foreach ($credentials as $credential) {
             $route = $this->activeRouteRepo->findRoute(
@@ -51,23 +59,26 @@ class SepehrFlightLegency implements FlightProviderInterface
                 $originId,
                 $destinationId,
                 $dayOfWeek,
-            );
-
-            if (is_null($route)) continue;
-
+                );
+                
+                if (is_null($route)) continue;
+                
             $params = [
                 'OriginIataCode'      => $request->originIata,
                 'DestinationIataCode' => $request->destinationIata,
                 'DepartureDate'       => $request->departureDate,
-            ];
-
-            if ($request->fetchSupplierWebserviceFlights || $credential->hasNira) {
+                'FetchSupplierWebserviceFlights' => false,
+                'FetchFlighsWithBookingPolicy' => true,
+                'Language' => 'FA',
+                ];
+                
+                if ($request->fetchSupplierWebserviceFlights || $credential->hasNira) {
                 $params['FetchSupplierWebserviceFlights'] = true;
             }
-
+            
             try {
                 $raw = $this->httpClient->post($credential, 'SearchByRouteAndDate', $params);
-
+                
                 if (isset($raw['ErrorMessage'])) {
                     $apiResults[] = $this->buildErrorResult($credential, Visa::addSystemReport([
                         'supplier' => $credential->supplierObjectId,
@@ -89,8 +100,8 @@ class SepehrFlightLegency implements FlightProviderInterface
                     'CurrencyCode'      => 'IRR',
                     'CharterFlights'    => $charterFlights,
                     'WebserviceFlights' => $webserviceFlights,
-                ];
-            } catch (ProviderException $e) {
+                    ];
+                } catch (ProviderException $e) {
                 $apiResults[] = $this->buildErrorResult($credential, [
                     'Data' => ['Status' => false, 'Code' => $e->getProviderCode(), 'Message' => $e->getMessage()],
                     'Trace' => $e->getTrace(),
@@ -99,28 +110,129 @@ class SepehrFlightLegency implements FlightProviderInterface
         }
 
         if (empty($apiResults)) {
+                $Data = [
+                    'Status' => false,
+                    'Time' => time(),
+                    'Code' => '1503',
+                    'Message' => 'No active routes found',
+                ];
             return new SearchFlightResult(
-                status:       false,
-                time:         time(),
-                currencyCode: 'IRR',
-                flights:      [],
-                rawResult:    $apiResults,
-                errorCode:    '1503',
-                errorMessage: 'No active routes found',
+                Data: $Data,
+                Result: $apiResults,
             );
         }
 
         $flights = $this->flightMapper->mapSearchResponse($apiResults, $request->withDetails, $request->branch);
-
-        return new SearchFlightResult(
-            status:       true,
-            time:         time(),
-            currencyCode: 'IRR',
-            flights:      $flights,
-            rawResult:    $apiResults,
-        );
+        try{
+                $Data = [
+                    'Status' => true,
+                    'Time' => time(),
+                    'CurrencyCode' => 'IRR',
+                    'Information' => $flights
+                ];
+            return new SearchFlightResult(
+                Data: $Data,
+                Result: $apiResults,
+            );
+            
+        }catch(Exception $e){
+         dd($e);   // Handle the exception
+        }
     }
 
+    public function lock(LockFlightRequest $request): LockFlightResult
+    {
+        $credential = $this->credentialRepo->getBySupplier($request->supplierId);
+        if (!$credential) {
+            throw CredentialNotFoundException::forBranch($request->branch);
+        }
+
+        try {
+            $raw = $this->httpClient->post($credential, 'Lock', $request->lockData);
+
+            // Sepehr در Lock هم ErrorMessage برمی‌گردونه
+            if (isset($raw['ErrorMessage'])) {
+                return new LockFlightResult(
+                    status:       false,
+                    lockId:       false,
+                    rawResult:    $raw,
+                    errorCode:    '1502-' . ($raw['ExceptionType'] ?? ''),
+                    errorMessage: $raw['ErrorMessage'],
+                );
+            }
+
+            return new LockFlightResult(
+                status:    true,
+                lockId:    $raw['LockId'] ?? false,
+                rawResult: $raw,
+            );
+
+        } catch (ProviderException $e) {
+            return new LockFlightResult(
+                status:       false,
+                lockId:       false,
+                rawResult:    [],
+                errorCode:    '2001-' . $e->getCode(),
+                errorMessage: $e->getMessage() . ' : خطایی رخ داده است. لطفا به واحد IT اطلاع دهید.',
+            );
+        }
+    }
+    public function getBookStatus(BookStatusRequest $request): BookStatusResult
+    {
+        $credential = $this->credentialRepo->getBySupplier($request->supplierId);
+        if (!$credential) {
+            throw CredentialNotFoundException::forBranch($request->branch);
+        }
+ 
+        try {
+            // BookGetStatus از Credential wrapper استفاده می‌کند (در SepehrConfig تعریف شده)
+            $raw = $this->httpClient->postWithTimeout($credential, 'BookGetStatus', [
+                'YourLocalInventoryPnr' => $request->localInventoryPnr,
+            ]);
+ 
+            if (isset($raw['ErrorMessage'])) {
+                return new BookStatusResult(
+                    status:       false,
+                    statusId:     false,
+                    statusDesc:   false,
+                    localPnr:     false,
+                    failReason:   false,
+                    rawResult:    $raw,
+                    errorCode:    '1504-' . ($raw['ExceptionType'] ?? ''),
+                    errorMessage: $raw['ErrorMessage'],
+                );
+            }
+ 
+            // StatusId == 1 یعنی رزرو موفق بوده
+            $isIssued = isset($raw['StatusId']) && $raw['StatusId'] == 1;
+ 
+            return new BookStatusResult(
+                status:      $isIssued,
+                statusId:    $raw['StatusId'] ?? false,
+                statusDesc:  $raw['StatusDesc'] ?? false,
+                localPnr:    $raw['LocalPnr'] ?? false,
+                failReason:  $raw['FailReason'] ?? false,
+                rawResult:   $raw,
+                errorCode:   $isIssued ? false : '1505-' . ($raw['StatusId'] ?? ''),
+                errorMessage: $isIssued ? false :
+                    $request->localInventoryPnr . ':' . ($raw['StatusDesc'] ?? '') .
+                    (isset($raw['FailReason']) ? ' | ' . $raw['FailReason'] : ''),
+            );
+ 
+        } catch (ProviderException $e) {
+            return new BookStatusResult(
+                status:       false,
+                statusId:     false,
+                statusDesc:   false,
+                localPnr:     false,
+                failReason:   false,
+                rawResult:    [],
+                errorCode:    '2002-' . $e->getCode(),
+                errorMessage: $e->getMessage() . ' : خطایی رخ داده است. لطفا به واحد IT اطلاع دهید.',
+            );
+        }
+    }
+ 
     // ─── Book ────────────────────────────────────────────────────────────────────
 
     public function book(BookFlightRequest $request): BookFlightResult
