@@ -5,39 +5,125 @@ namespace App\Services\OTA\Flights\Infrastructure\Adapters;
 use App\Services\OTA\Flights\Application\DTOs\SearchFlightResult;
 use App\Services\OTA\Flights\Domain\Entities\Flight;
 use App\Services\OTA\Flights\Domain\Entities\FlightClass;
+use App\Services\OTA\Flights\Domain\ValueObjects\Financial;
+use App\Services\OTA\Flights\Domain\ValueObjects\FarePrice;
+use App\Services\OTA\Flights\Domain\ValueObjects\Baggage;
+use App\Services\OTA\Flights\Domain\ValueObjects\BookingPolicy;
+use App\Services\OTA\Flights\Domain\ValueObjects\FlightRemarks;
 
+/**
+ * تبدیل SearchFlightResult (V2 DTOs/Entities) به آرایه دقیقاً مشابه V1
+ * که BaseService::checkSearchFlightItem و بقیه کد انتظار دارن.
+ *
+ * ساختار مورد انتظار BaseService از هر flight item:
+ * [
+ *   'Service'            => string,
+ *   'ServiceId'          => int,
+ *   'ServiceBranch'      => int,
+ *   'DisplayableService' => string,
+ *   'Verified'           => bool,
+ *   'FlightType'         => string,   // 'Charter' | 'WebService' | 'System'
+ *   'FlightRoute'        => string,   // 'Internal' | 'International'
+ *   'FlightNumber'       => string,
+ *   'Origin'             => ['Iata' => string|array, 'Terminal' => bool],
+ *   'Destination'        => ['Iata' => string|array, 'Terminal' => bool],
+ *   'DepartureDateTime'  => string,
+ *   'ArrivalDateTime'    => string|false,
+ *   'Duration'           => int|false,
+ *   'Aircraft'           => string|array,
+ *   'Airline'            => string|array,  // BaseService خونه: $item['Airline']['iata']
+ *   'Remarks'            => [
+ *       'AirlineSupplier'      => bool,
+ *       'TourRequirement'      => bool,
+ *       'OneWayRequirement'    => bool,
+ *       'RoundtripRequirement' => bool,
+ *       'PhoneRequirement'     => bool,
+ *       'Description'          => string|false,
+ *       'Special'              => bool,
+ *       'Warranty'             => bool,
+ *   ],
+ *   'ReturningFlight'    => array|false,
+ *   'Steps'              => array|false,
+ *   'Classes'            => [   // ← آرایه از classها (checkSearchFlightItem روی این usort می‌کنه)
+ *       [
+ *           'FlightStatus'      => bool,
+ *           'Reservable'        => bool,
+ *           'Status'            => string,
+ *           'CancelationPolicy' => string|bool,
+ *           'BookingPolicy'     => array|false,
+ *           'Supplier'          => array,
+ *           'SystemSupplier'    => array,
+ *           'FlightId'          => string,
+ *           'FareName'          => string|false,
+ *           'CabinType'         => array,
+ *           'AvailableSeat'     => int|false,
+ *           'Rules'             => bool,
+ *           'Financial'         => [    // ← flat array (نه object)
+ *               'PriceAdditions' => ['Citizens' => int],
+ *               'CommissionPaid' => ['Percentage' => bool, 'Transaction' => string, 'MembershipRight' => bool],
+ *               'Adult'   => ['BaseFare'=>int, 'Tax'=>int, 'Markup'=>int, 'TotalFare'=>int, 'Payable'=>int, 'Commission'=>['Percentage'=>float,'Final'=>int,'Price'=>int]],
+ *               'Child'   => [...],
+ *               'Infant'  => [...],
+ *           ],
+ *           'BaseData'          => [
+ *               'Supplier'  => ['Supplier' => array, 'SystemSupplier' => array],
+ *               'Financial' => [  // ← همون ساختار Financial بالا
+ *                   'Adult' => [...], 'Child' => [...], 'Infant' => [...], ...
+ *               ],
+ *           ],
+ *           'Baggage'           => [
+ *               'Adult'  => ['Trunk'=>['Number'=>int|false,'TotalWeight'=>int|false], 'Hand'=>[...]],
+ *               'Child'  => [...],
+ *               'Infant' => [...],
+ *           ],
+ *           'Remarks'           => false | [   // ← checkSearchFlightItem: $class['Remarks']['Inbound']['Special']
+ *               'Inbound' => [
+ *                   'AirlineSupplier'      => bool,
+ *                   'TourRequirement'      => bool,
+ *                   'OneWayRequirement'    => bool,
+ *                   'RoundtripRequirement' => bool,
+ *                   'PhoneRequirement'     => bool,
+ *                   'Description'          => string|false,
+ *                   'Special'              => bool,
+ *                   'Warranty'             => bool,
+ *               ],
+ *               'Outbound' => false|array,
+ *           ],
+ *       ],
+ *   ],
+ * ]
+ */
 class LegacySearchAdapter
 {
     /**
-     * تبدیل DTO مدرن به آرایه کلاسیک نسخه ۱
-     * اضافه شدن پارامتر details$ برای هندل کردن ساختار فرودگاه‌ها در BaseService
+     * تبدیل SearchFlightResult به آرایه V1-compatible
+     *
+     * @param SearchFlightResult $result
+     * @param bool $details اگه true باشه Iata کامل array، اگه false باشه string سه‌حرفی
      */
     public static function toArray(SearchFlightResult $result, bool $details = false): array
     {
-        // پشتیبانی از هر دو حالت Data$ (آرایه) و data$ (آبجکت) در DTO
-        $data = is_array($result->Data ?? null) ? $result->Data : (array) ($result->data ?? []);
+        $data      = is_array($result->Data ?? null) ? $result->Data : (array) ($result->data ?? []);
         $rawResult = is_array($result->Result ?? null) ? $result->Result : (array) ($result->result ?? []);
 
-        // هندل کردن خطای جستجو
+        // خطا
         if (empty($data['Status']) || $data['Status'] === false) {
             return [
                 'Data' => [
                     'Status'  => false,
                     'Time'    => $data['Time'] ?? time(),
-                    'Code'    => $data['ErrorCode'] ?? '500',
-                    'Message' => $data['ErrorMessage'] ?? 'خطایی رخ داده است',
+                    'Code'    => $data['ErrorCode'] ?? $data['Code'] ?? '500',
+                    'Message' => $data['ErrorMessage'] ?? $data['Message'] ?? 'خطایی رخ داده است',
                 ],
                 'Result' => $rawResult,
             ];
         }
 
-        // پردازش پروازها
+        $flights     = $data['Information'] ?? $data['flights'] ?? [];
         $information = [];
-        $flights = $data['Information'] ?? $data['flights'] ?? [];
-        if (!empty($flights) && (is_array($flights) || is_iterable($flights))) {
-            foreach ($flights as $flight) {
-                $information[] = self::mapFlight($flight, $details);
-            }
+
+        foreach ($flights as $flight) {
+            $information[] = self::mapFlight($flight, $details);
         }
 
         return [
@@ -51,27 +137,22 @@ class LegacySearchAdapter
         ];
     }
 
-    /**
-     * مپ کردن دقیق موجودیت Flight
-     */
+    // ─── Flight ──────────────────────────────────────────────────────────────
+
     private static function mapFlight(Flight $flight, bool $details): array
     {
-        $classesArray = [];
-        foreach ($flight->classes as $flightClass) {
-            $classesArray[] = self::mapFlightClass($flightClass);
-        }
-
-        // 1. تبدیل امن مبدا و مقصد به آرایه
-        $originRaw = self::toArraySafe($flight->origin);
+        // Origin / Destination
+        $originRaw      = self::toArraySafe($flight->origin);
         $destinationRaw = self::toArraySafe($flight->destination);
 
-        // 2. جداسازی اطلاعات فرودگاه (iata) از ترمینال
-        $originAirport = $originRaw['iata'] ?? $originRaw;
-        $destinationAirport = $destinationRaw['iata'] ?? $destinationRaw;
+        $originIata = self::resolveIata($originRaw['iata'] ?? $originRaw, $details);
+        $destIata   = self::resolveIata($destinationRaw['iata'] ?? $destinationRaw, $details);
 
-        // 3. اعمال شرط details (اگر false باشد فقط رشته سه حرفی، اگر true باشد کل آرایه فرودگاه)
-        $originIataData = $details ? $originAirport : ($originAirport['iata'] ?? $originAirport);
-        $destinationIataData = $details ? $destinationAirport : ($destinationAirport['iata'] ?? $destinationAirport);
+        // Classes — هر FlightClass entity → flat array
+        $classes = [];
+        foreach ($flight->classes as $class) {
+            $classes[] = self::mapClass($class, $details);
+        }
 
         return [
             'Service'            => $flight->service,
@@ -79,159 +160,338 @@ class LegacySearchAdapter
             'ServiceBranch'      => $flight->serviceBranch,
             'DisplayableService' => $flight->displayableService,
             'Verified'           => $flight->verified,
-            // استخراج نام از Enumها
-            'FlightType'         => $flight->flightType->name ?? $flight->flightType, 
-            'FlightRoute'        => $flight->flightRoute->name ?? $flight->flightRoute, 
+            'FlightType'         => $flight->flightType instanceof \BackedEnum
+                                        ? $flight->flightType->value
+                                        : (string) $flight->flightType,
+            'FlightRoute'        => $flight->flightRoute instanceof \BackedEnum
+                                        ? $flight->flightRoute->value
+                                        : (string) $flight->flightRoute,
             'FlightNumber'       => $flight->flightNumber,
-            
-            // --- ساختار دقیق Origin و Destination منطبق با V1 ---
             'Origin'             => [
-                'Iata'     => $originIataData,
+                'Iata'     => $originIata,
                 'Terminal' => $originRaw['terminal'] ?? false,
             ],
             'Destination'        => [
-                'Iata'     => $destinationIataData,
+                'Iata'     => $destIata,
                 'Terminal' => $destinationRaw['terminal'] ?? false,
             ],
-            // ---------------------------------------------------
-            
             'DepartureDateTime'  => $flight->departureDateTime,
             'ArrivalDateTime'    => $flight->arrivalDateTime,
             'Duration'           => $flight->duration,
             'Aircraft'           => self::toArraySafe($flight->aircraft),
             'Airline'            => self::toArraySafe($flight->airline),
-            
-            'Remarks'            => [
-                'AirlineSupplier'      => $flight->remarks->airlineSupplier ?? false,
-                'TourRequirement'      => $flight->remarks->tourRequirement ?? false,
-                'OneWayRequirement'    => $flight->remarks->oneWayRequirement ?? false,
-                'RoundtripRequirement' => $flight->remarks->roundtripRequirement ?? false,
-                'PhoneRequirement'     => $flight->remarks->phoneRequirement ?? false,
-                'Description'          => $flight->remarks->description ?? '',
-                'Special'              => $flight->remarks->special ?? false,
-                'Warranty'             => $flight->remarks->warranty ?? false,
-            ],
-            
+            'Remarks'            => self::mapFlightRemarks($flight->remarks),
             'ReturningFlight'    => $flight->returningFlight,
-            
-            'Steps'              => $flight->steps ? array_map(function($step) {
-                return [
-                    'StopoverAirport'     => $step->airportIata ?? '',
-                    'TimeFromStartToStop' => $step->stopDurationMinutes ?? 0,
-                    'StopTime'            => $step->stopDurationMinutes ?? 0,
-                    'ArrivalDateTime'     => $step->arrivalDateTime ?? '',
-                    'DepartureDateTime'   => $step->departureDateTime ?? '',
-                ];
-            }, $flight->steps) : false,
-            
-            'Classes'            => $classesArray,
+            'Steps'              => $flight->steps
+                                        ? array_map(fn($s) => self::mapStep($s), $flight->steps)
+                                        : false,
+            'Classes'            => $classes,
         ];
     }
 
-    /**
-     * مپ کردن دقیق موجودیت FlightClass
-     */
-    private static function mapFlightClass(FlightClass $class): array
+    // ─── FlightClass ─────────────────────────────────────────────────────────
+
+    private static function mapClass(FlightClass $class, bool $details): array
     {
-        $financial = self::toArraySafe($class->financial);
-        $baseDataRaw = self::toArraySafe($class->baseData);
+        $financial = self::mapFinancial($class->financial);
+
+        // baseData['Financial'] می‌تونه Financial object باشه، array باشه، یا null
+        $baseFinancialRaw = $class->baseData['Financial'] ?? null;
+        if ($baseFinancialRaw instanceof Financial) {
+            $baseFinancial = self::mapFinancial($baseFinancialRaw);
+        } elseif (is_array($baseFinancialRaw) && isset($baseFinancialRaw['Adult'])) {
+            $baseFinancial = self::ensureFinancialStructure($baseFinancialRaw);
+        } else {
+            // fallback: همون financial اصلی
+            $baseFinancial = $financial;
+        }
 
         return [
             'FlightStatus'      => $class->flightStatus,
             'Reservable'        => $class->reservable,
             'Status'            => $class->status,
             'CancelationPolicy' => $class->cancelationPolicy,
-            'BookingPolicy'     => $class->bookingPolicy ? [
-                'RestrictedForTour' => $class->bookingPolicy->restrictedForTour ?? false,
-                'ReturningFlightMustNotEqualToAnyFlight' => $class->bookingPolicy->returningFlightMustNotEqualToAnyFlight ?? false,
-                'ReturningFlightMustEqualToAnyFlight' => $class->bookingPolicy->returningFlightMustEqualToAnyFlight ?? false,
-                'RestrictedReturningBySameAirline' => $class->bookingPolicy->restrictedReturningBySameAirline ?? false,
-            ] : false,
-            
+            'BookingPolicy'     => self::mapBookingPolicy($class->bookingPolicy),
+
             'Supplier'          => self::toArraySafe($class->supplier),
             'SystemSupplier'    => self::toArraySafe($class->systemSupplier),
+
             'FlightId'          => $class->flightId,
             'FareName'          => $class->fareName,
             'CabinType'         => self::toArraySafe($class->cabinType),
             'AvailableSeat'     => $class->availableSeat,
             'Rules'             => $class->rules,
-            
-            // بخش مالی با حروف بزرگ (PascalCase) برای مطابقت با V1
-            'Financial'         => self::pascalCaseKeys($financial),
-            
+
+            'Financial'         => $financial,
+
             'BaseData'          => [
                 'Supplier' => [
-                    'Supplier'       => self::toArraySafe($baseDataRaw['supplier']['supplier'] ?? $class->supplier),
-                    'SystemSupplier' => self::toArraySafe($baseDataRaw['supplier']['systemSupplier'] ?? $class->systemSupplier),
+                    'Supplier'       => self::toArraySafe(
+                        $class->baseData['Supplier']['Supplier'] ?? $class->supplier
+                    ),
+                    'SystemSupplier' => self::toArraySafe(
+                        $class->baseData['Supplier']['SystemSupplier'] ?? $class->systemSupplier
+                    ),
                 ],
-                'Financial' => self::pascalCaseKeys(self::toArraySafe($baseDataRaw['financial'] ?? $financial)),
+                'Financial' => $baseFinancial,
             ],
-            
-            // ساختار بار (Baggage) ثابت روی 3 مسافر
-            'Baggage'           => [
-                'Adult' => [
-                    'Trunk' => [
-                        'Number'      => $class->baggage->adult->trunkNumber ?? false,
-                        'TotalWeight' => $class->baggage->adult->trunkWeight ?? false,
-                    ],
-                    'Hand' => [
-                        'Number'      => $class->baggage->adult->handNumber ?? false,
-                        'TotalWeight' => $class->baggage->adult->handWeight ?? false,
-                    ]
-                ],
-                'Child' => [
-                    'Trunk' => [
-                        'Number'      => $class->baggage->child->trunkNumber ?? false,
-                        'TotalWeight' => $class->baggage->child->trunkWeight ?? false,
-                    ],
-                    'Hand' => [
-                        'Number'      => $class->baggage->child->handNumber ?? false,
-                        'TotalWeight' => $class->baggage->child->handWeight ?? false,
-                    ]
-                ],
-                'Infant' => [
-                    'Trunk' => [
-                        'Number'      => $class->baggage->infant->trunkNumber ?? false,
-                        'TotalWeight' => $class->baggage->infant->trunkWeight ?? false,
-                    ],
-                    'Hand' => [
-                        'Number'      => $class->baggage->infant->handNumber ?? false,
-                        'TotalWeight' => $class->baggage->infant->handWeight ?? false,
-                    ]
-                ],
+
+            'Baggage'           => self::mapBaggage($class->baggage),
+
+            // ← مهم: checkSearchFlightItem روی $class['Remarks']['Inbound']['Special'] و بقیه دسترسی داره
+            'Remarks'           => self::mapClassRemarks($class->inboundRemarks, $class->outboundPolicy),
+        ];
+    }
+
+    // ─── Financial ───────────────────────────────────────────────────────────
+
+    /**
+     * Financial entity → آرایه V1
+     */
+    private static function mapFinancial(Financial $financial): array
+    {
+        return [
+            'PriceAdditions' => [
+                'Citizens' => $financial->citizenPriceAddition ?? 0,
             ],
-            
-            'Remarks' => false,
+            'CommissionPaid' => [
+                'Percentage'      => $financial->commissionPercentage ?? false,
+                'Transaction'     => $financial->transaction ?? '0',
+                'MembershipRight' => $financial->membershipRight ?? false,
+            ],
+            'Adult'   => self::mapFarePrice($financial->adult),
+            'Child'   => self::mapFarePrice($financial->child),
+            'Infant'  => self::mapFarePrice($financial->infant),
+        ];
+    }
+
+    private static function mapFarePrice(FarePrice $fare): array
+    {
+        return [
+            'BaseFare'  => $fare->baseFare,
+            'Tax'       => $fare->tax,
+            'Markup'    => $fare->markup,
+            'TotalFare' => $fare->totalFare,
+            'Payable'   => $fare->payable,
+            'Commission' => [
+                'Percentage' => $fare->commissionPercentage,
+                'Final'      => $fare->commissionFinal,
+                'Price'      => $fare->commissionPrice,
+            ],
+        ];
+    }
+
+    private static function emptyFinancial(): array
+    {
+        $emptyFare = [
+            'BaseFare' => 0, 'Tax' => 0, 'Markup' => 0,
+            'TotalFare' => 0, 'Payable' => 0,
+            'Commission' => ['Percentage' => false, 'Final' => false, 'Price' => false],
+        ];
+        return [
+            'PriceAdditions' => ['Citizens' => 0],
+            'CommissionPaid' => ['Percentage' => false, 'Transaction' => '0', 'MembershipRight' => false],
+            'Adult'   => $emptyFare,
+            'Child'   => $emptyFare,
+            'Infant'  => $emptyFare,
         ];
     }
 
     /**
-     * متد کمکی: تبدیل امن آبجکت‌ها و مدل‌ها به آرایه
+     * اگه financial array از V1 format داره ولی ممکنه PriceAdditions/CommissionPaid نداشته باشه
      */
-    private static function toArraySafe($data): array
+    private static function ensureFinancialStructure(array $f): array
     {
-        if (is_object($data)) {
-            if (method_exists($data, 'toArray')) {
-                return $data->toArray();
-            }
-            return json_decode(json_encode($data), true) ?? [];
-        }
-        return is_array($data) ? $data : [];
+        return [
+            'PriceAdditions' => $f['PriceAdditions'] ?? ['Citizens' => 0],
+            'CommissionPaid' => $f['CommissionPaid'] ?? [
+                'Percentage' => false, 'Transaction' => '0', 'MembershipRight' => false
+            ],
+            'Adult'   => $f['Adult']   ?? self::emptyFare(),
+            'Child'   => $f['Child']   ?? self::emptyFare(),
+            'Infant'  => $f['Infant']  ?? self::emptyFare(),
+        ];
+    }
+
+    private static function emptyFare(): array
+    {
+        return [
+            'BaseFare' => 0, 'Tax' => 0, 'Markup' => 0,
+            'TotalFare' => 0, 'Payable' => 0,
+            'Commission' => ['Percentage' => false, 'Final' => false, 'Price' => false],
+        ];
+    }
+
+    // ─── Remarks ─────────────────────────────────────────────────────────────
+
+    /**
+     * Flight-level Remarks (نه Class-level)
+     * BaseService: $item['Remarks']['TourRequirement'] و غیره
+     */
+    private static function mapFlightRemarks(FlightRemarks $remarks): array
+    {
+        return [
+            'AirlineSupplier'      => $remarks->airlineSupplier,
+            'TourRequirement'      => $remarks->tourRequirement,
+            'OneWayRequirement'    => $remarks->oneWayRequirement,
+            'RoundtripRequirement' => $remarks->roundtripRequirement,
+            'PhoneRequirement'     => $remarks->phoneRequirement,
+            'Description'          => $remarks->description,
+            'Special'              => $remarks->special,
+            'Warranty'             => $remarks->warranty,
+        ];
     }
 
     /**
-     * متد کمکی: بزرگ کردن حرف اول کلیدها (PascalCase) به صورت بازگشتی
+     * Class-level Remarks
+     * BaseService: $class['Remarks']['Inbound']['Special']
+     *              $class['Remarks']['Inbound']['TourRequirement']
+     *              $class['Remarks']['Outbound']['TourRequirement']
+     *
+     * اگه inboundRemarks نداشتیم → false (checkSearchFlightItem این حالت رو handle می‌کنه)
      */
-    private static function pascalCaseKeys(array $array): array
-    {
-        $result = [];
-        foreach ($array as $key => $value) {
-            $newKey = is_string($key) ? ucfirst($key) : $key;
-            if (is_array($value)) {
-                $value = self::pascalCaseKeys($value);
-            }
-            $result[$newKey] = $value;
+    private static function mapClassRemarks(
+        FlightRemarks|false $inbound,
+        BookingPolicy|false $outboundPolicy
+    ): array|false {
+        if ($inbound === false) {
+            return false;
         }
-        return $result;
+
+        return [
+            'Inbound' => [
+                'AirlineSupplier'      => $inbound->airlineSupplier,
+                'TourRequirement'      => $inbound->tourRequirement,
+                'OneWayRequirement'    => $inbound->oneWayRequirement,
+                'RoundtripRequirement' => $inbound->roundtripRequirement,
+                'PhoneRequirement'     => $inbound->phoneRequirement,
+                'Description'          => $inbound->description,
+                'Special'              => $inbound->special,
+                'Warranty'             => $inbound->warranty,
+            ],
+            'Outbound' => $outboundPolicy
+                ? self::mapOutboundPolicy($outboundPolicy)
+                : false,
+        ];
+    }
+
+    private static function mapOutboundPolicy(BookingPolicy $policy): array
+    {
+        return [
+            'AllowedReturnFlights'          => $policy->returningFlightMustEqualList,
+            'UnauthorizedReturnFlights'     => $policy->returningFlightMustNotEqualList,
+            'ReturnOnlyFromTheAirlineOfOrigin' => $policy->restrictedReturningBySameAirline,
+            'ReturnFlightProvider'          => $policy->returnFlightSupplierId,
+            'DistanceToReturnFlight'        => [
+                'Min' => $policy->fareMinStayDays,
+                'Max' => $policy->fareMaxStayDays,
+            ],
+        ];
+    }
+
+    // ─── BookingPolicy ───────────────────────────────────────────────────────
+
+    private static function mapBookingPolicy(BookingPolicy|false $policy): array|false
+    {
+        if ($policy === false) return false;
+
+        return [
+            'RestrictedForTour'                        => $policy->restrictedForTour,
+            'ReturningFlightMustNotEqualToAnyFlight'   => $policy->returningFlightMustNotEqualToAnyFlight,
+            'ReturningFlightMustEqualToAnyFlight'      => $policy->returningFlightMustEqualToAnyFlight,
+            'RestrictedReturningBySameAirline'         => $policy->restrictedReturningBySameAirline,
+            'ReturningFlightMustEqualList'             => $policy->returningFlightMustEqualList,
+            'ReturningFlightMustNotEqualList'          => $policy->returningFlightMustNotEqualList,
+            'FareMinStay'                              => $policy->fareMinStayDays
+                ? ['MinimumStayDay' => $policy->fareMinStayDays] : false,
+            'FareMaxStay'                              => $policy->fareMaxStayDays
+                ? ['MaximumStayDay' => $policy->fareMaxStayDays] : false,
+        ];
+    }
+
+    // ─── Baggage ─────────────────────────────────────────────────────────────
+
+    private static function mapBaggage(Baggage $baggage): array
+    {
+        return [
+            'Adult' => [
+                'Trunk' => [
+                    'Number'      => $baggage->adult->trunkNumber,
+                    'TotalWeight' => $baggage->adult->trunkWeight,
+                ],
+                'Hand' => [
+                    'Number'      => $baggage->adult->handNumber,
+                    'TotalWeight' => $baggage->adult->handWeight,
+                ],
+            ],
+            'Child' => [
+                'Trunk' => [
+                    'Number'      => $baggage->child->trunkNumber,
+                    'TotalWeight' => $baggage->child->trunkWeight,
+                ],
+                'Hand' => [
+                    'Number'      => $baggage->child->handNumber,
+                    'TotalWeight' => $baggage->child->handWeight,
+                ],
+            ],
+            'Infant' => [
+                'Trunk' => [
+                    'Number'      => $baggage->infant->trunkNumber,
+                    'TotalWeight' => $baggage->infant->trunkWeight,
+                ],
+                'Hand' => [
+                    'Number'      => $baggage->infant->handNumber,
+                    'TotalWeight' => $baggage->infant->handWeight,
+                ],
+            ],
+        ];
+    }
+
+    // ─── Steps ───────────────────────────────────────────────────────────────
+
+    private static function mapStep(\App\Services\OTA\Flights\Domain\ValueObjects\Stopover $step): array
+    {
+        return [
+            'StopoverAirport'     => $step->airportIata,
+            'TimeFromStartToStop' => $step->stopDurationMinutes,
+            'StopTime'            => $step->stopDurationMinutes,
+            'ArrivalDateTime'     => $step->arrivalDateTime,
+            'DepartureDateTime'   => $step->departureDateTime,
+        ];
+    }
+
+    // ─── Iata resolver ───────────────────────────────────────────────────────
+
+    /**
+     * details=false → string سه‌حرفی
+     * details=true  → array کامل فرودگاه
+     *
+     * BaseService خط 263: if ($item['Origin']['Iata'] == $data['OriginIataCode'])
+     * یعنی وقتی details=false باید string مستقیم باشه
+     *
+     * BaseService خط 5013: $item['Origin']['Iata']['iata'] ?? $item['Origin']['Iata']
+     * یعنی هر دو حالت handle شده
+     */
+    private static function resolveIata(mixed $iata, bool $details): mixed
+    {
+        if (!$details) {
+            // string مستقیم
+            if (is_string($iata)) return $iata;
+            if (is_array($iata)) return $iata['iata'] ?? $iata;
+            return $iata;
+        }
+        // details=true → array کامل
+        return is_array($iata) ? $iata : ['iata' => $iata];
+    }
+
+    // ─── Helpers ─────────────────────────────────────────────────────────────
+
+    private static function toArraySafe(mixed $data): array
+    {
+        if (is_object($data)) {
+            if (method_exists($data, 'toArray')) return $data->toArray();
+            return json_decode(json_encode($data), true) ?? [];
+        }
+        return is_array($data) ? $data : [];
     }
 }

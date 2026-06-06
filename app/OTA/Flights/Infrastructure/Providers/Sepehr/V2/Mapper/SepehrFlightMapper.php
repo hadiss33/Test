@@ -405,7 +405,7 @@ class SepehrFlightMapper
     {
         $origin      = DB::table('airports')->select('country')->where('iata', $originIata)->first();
         $destination = DB::table('airports')->select('country')->where('iata', $destinationIata)->first();
-        $countryCode = env('COUNTRY_CODE');
+        $countryCode = 118;
 
         if ($origin?->country !== $countryCode || $destination?->country !== $countryCode) {
             return FlightRoute::International;

@@ -39,7 +39,7 @@ class SepehrFinancialMapper
         return new Financial(
             citizenPriceAddition: 0,
             commissionPercentage: false,
-            transaction:          env('SEPEHR_TRANSACTION'),
+            transaction:          0,
             membershipRight:      false,
             adult:                $this->mapFare($adultFare, $markupAdl),
             child:                $this->mapFare($childFare, $markupChi),
